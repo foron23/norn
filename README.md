@@ -4,6 +4,8 @@
 ![Python](https://img.shields.io/badge/python-3.11+-blue)
 ![Version](https://img.shields.io/badge/version-0.1.0-cyan)
 
+**English** | [Español](README.es.md)
+
 A red teaming CLI framework for LLM applications — models, RAG systems, and agents.
 Norn runs structured adversarial campaigns using a three-layer attack taxonomy and
 produces scored reports with verified metrics, so security researchers can perform
