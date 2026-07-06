@@ -1,0 +1,32 @@
+# Norn Lab Experiment — L2: RAG Systems
+# Model: NVIDIA Nemotron 3 Super (120B MoE, 12B active)
+# Cloud: ollama.com | Tag: nemotron-3-super:cloud
+
+campaign_name: "Lab L2 - Nemotron 3 Super (Cloud)"
+layer: "L2"
+description: "L2 RAG audit against Nemotron 3 Super via web app. 3 techniques, R=5."
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l2"
+  api_key: "not-needed"
+  model_name: "nemotron-3-super:cloud"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 256
+  seed: 42
+  timeout: 600.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "weighted_avg"
+
+replicas_per_case: 5
+max_turns: 5
+
+techniques: [L2_AT_01, L2_AT_02, L2_AT_03]
+metrics: [L2_ME_01, L2_ME_02, L2_ME_03]
+
+export:
+  output_dir: "./norn_exports"
+  formats: [html, json, csv]

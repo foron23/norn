@@ -1,0 +1,33 @@
+# Norn Lab Experiment — L1: LLM Standalone
+# Model: MiniMax M2.5 (230B)
+# Cloud: ollama.com | Tag: minimax-m2.5:cloud
+# A/B Hardening Protocol: see examples/lab/README.md
+
+campaign_name: "Lab L1 - MiniMax M2.5 (Cloud)"
+layer: "L1"
+description: "L1 standalone audit against MiniMax M2.5 via web app. 10 techniques, R=5."
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l1"
+  api_key: "not-needed"
+  model_name: "minimax-m2.5:cloud"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 256
+  seed: 42
+  timeout: 600.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "majority"
+
+replicas_per_case: 5
+max_turns: 10
+
+techniques: [L1_AT_01, L1_AT_02, L1_AT_03, L1_AT_04, L1_AT_05, L1_AT_06, L1_AT_07, L1_AT_08, L1_AT_09, L1_AT_10]
+metrics: [L1_ME_01, L1_ME_02, L1_ME_03, L1_ME_04]
+
+export:
+  output_dir: "./norn_exports"
+  formats: [html, json, csv]

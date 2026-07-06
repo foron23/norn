@@ -1,0 +1,63 @@
+# Norn Campaign Configuration
+# Full kill-chain audit covering all three layers:
+#   L1 (LLM Standalone): 10 techniques — prompt injection, jailbreaks, obfuscation, etc.
+#   L2 (RAG Systems): 3 techniques — indirect injection, index poisoning, retrieval manipulation
+#   L3 (Agents with Tools): 3 techniques — tool abuse, agentic injection, cross-tool chaining
+# Layer set to L3 to exercise the full agent kill chain (L1→L2→L3).
+
+campaign_name: "Full Kill-Chain Audit - All Layers"
+layer: "L3"
+description: "End-to-end adversarial assessment covering L1 standalone attacks, L2 RAG pipeline attacks, and L3 agent tool abuse"
+
+model:
+  provider: "ollama"
+  model_name: "llama3.1:8b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 2048
+  seed: 42
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "majority"
+
+replicas_per_case: 5
+max_turns: 10
+max_tool_calls: 5
+
+techniques:
+  - "L1_AT_01"
+  - "L1_AT_02"
+  - "L1_AT_03"
+  - "L1_AT_04"
+  - "L1_AT_05"
+  - "L1_AT_06"
+  - "L1_AT_07"
+  - "L1_AT_08"
+  - "L1_AT_09"
+  - "L1_AT_10"
+  - "L2_AT_01"
+  - "L2_AT_02"
+  - "L2_AT_03"
+  - "L3_AT_01"
+  - "L3_AT_02"
+  - "L3_AT_03"
+
+metrics:
+  - "L1_ME_01"
+  - "L1_ME_02"
+  - "L1_ME_03"
+  - "L1_ME_04"
+  - "L2_ME_01"
+  - "L2_ME_02"
+  - "L2_ME_03"
+  - "L3_ME_01"
+  - "L3_ME_02"
+  - "L3_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

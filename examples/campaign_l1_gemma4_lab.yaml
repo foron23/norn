@@ -1,0 +1,43 @@
+# Norn Campaign Configuration
+# Demo: Fast L1 audit of Gemma 4 26B via lab's web app L1 endpoint
+#
+# Gemma 4 26B MoE (17GB, 256K context). MoE with 128 experts.
+# Uses the lab web app's OpenAI-compatible endpoint which proxies to Ollama.
+#
+# Fast demo — 3 techniques, 2 replicas each, ~5-6 min total.
+
+campaign_name: "Demo L1 Audit - Gemma 4 26B (Lab)"
+layer: "L1"
+description: "Fast L1 demo audit against Gemma 4 26B via web app endpoint. 3 techniques, 2 replicas each — runs in ~6 minutes."
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l1"
+  api_key: "not-needed"
+  model_name: "gemma4:31b-cloud"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 256
+  seed: 42
+  timeout: 300.0
+
+scoring:
+  mode: "heuristic"
+  vote_strategy: "majority"
+
+replicas_per_case: 2
+
+techniques:
+  - "L1_AT_01"
+  - "L1_AT_02"
+  - "L1_AT_06"
+
+metrics:
+  - "L1_ME_01"
+  - "L1_ME_02"
+  - "L1_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "json"

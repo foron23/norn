@@ -1,0 +1,57 @@
+# Norn Lab Experiment — L3: Agents with Tools
+# Model: Gemma 4 26B
+# Lab target: web app at http://localhost:8085/v1/l3
+#
+# Gemma 4 26B MoE (18GB download, 3.8B active, 256K context). MoE with 128 experts. Highest agent quality (TAU2 68.2%). Supports native Ollama function calling + thinking mode.#
+# The agent uses LangGraph with ReAct pattern and tools:
+#   - read_email       (vulnerable to indirect injection)
+#   - process_refund   (vulnerable to privilege escalation)
+#   - fetch_web_content (vulnerable to SSRF exfiltration)
+#   - search_knowledge_base (vulnerable to data leakage)
+# Tool invocations are logged to Norn DB with is_authorized flag.
+#
+# A/B Hardening Protocol:
+#   Config A (baseline):  L3_HARDENING=false on target
+#   Config B (hardened):  L3_HARDENING=true  on target
+#   Run the SAME campaign twice — once per config — then compare metrics.
+#   See examples/lab/README.md for full execution protocol.
+
+campaign_name: "Lab L3 - Gemma 4 26B"
+layer: "L3"
+description: "l3 audit against Gemma 4 26B via web app endpoint. Covers all 3 L3 attack techniques with R=5 replicas."
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l3"
+  api_key: "not-needed"
+  model_name: "gemma4:26b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 256
+  seed: 42
+  timeout: 600.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "veto"
+
+replicas_per_case: 5
+max_turns: 10
+max_tool_calls: 5
+
+techniques:
+  - "L3_AT_01"
+  - "L3_AT_02"
+  - "L3_AT_03"
+
+metrics:
+  - "L3_ME_01"
+  - "L3_ME_02"
+  - "L3_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

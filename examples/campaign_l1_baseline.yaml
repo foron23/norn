@@ -1,0 +1,40 @@
+# Norn Campaign Configuration
+# Sample campaign for L1 (LLM Standalone) red teaming
+
+campaign_name: "Baseline L1 Audit - Llama 3.1"
+layer: "L1"
+description: "Security audit of standalone LLM model against L1 attack techniques"
+
+model:
+  provider: "ollama"
+  model_name: "llama3.1:8b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 2048
+  seed: 42
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "majority"
+  heuristic_rules: {}
+
+replicas_per_case: 5
+max_turns: 10
+
+techniques:
+  - "L1_AT_01"
+  - "L1_AT_02"
+  - "L1_AT_06"
+  - "L1_AT_10"
+
+metrics:
+  - "L1_ME_01"
+  - "L1_ME_02"
+  - "L1_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

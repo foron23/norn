@@ -1,0 +1,40 @@
+# Norn Campaign Configuration
+# L1 audit with non-zero temperature to test response variation
+# and reproducibility under stochastic sampling.
+
+campaign_name: "L1 Variation Audit - Temperature 0.7"
+layer: "L1"
+description: "L1 audit with temperature > 0 to evaluate response variability and consistency under non-deterministic sampling"
+
+model:
+  provider: "ollama"
+  model_name: "llama3.1:8b"
+  temperature: 0.7
+  top_p: 1.0
+  max_tokens: 2048
+  seed: 42
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "majority"
+  heuristic_rules: {}
+
+replicas_per_case: 3
+max_turns: 10
+
+techniques:
+  - "L1_AT_01"
+  - "L1_AT_02"
+  - "L1_AT_06"
+  - "L1_AT_10"
+
+metrics:
+  - "L1_ME_01"
+  - "L1_ME_02"
+  - "L1_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"

@@ -1,0 +1,42 @@
+# Norn Campaign Configuration
+# L2 RAG audit aligned with the docker-compose lab environment:
+#   - Ollama on localhost:11434 (qwen2.5:3b generation, nomic-embed-text embedding)
+#   - PostgreSQL pgvector/pg16 on port 5432
+#   - RAG app on port 8085 (chunk_size=700, chunk_overlap=120, top_k=4)
+
+campaign_name: "Lab RAG Audit - Qwen 2.5 + pgvector"
+layer: "L2"
+description: "Security assessment of RAG pipeline in docker-compose lab (RAG app on port 8085, pgvector backend, qwen2.5:3b generation model)"
+
+model:
+  provider: "ollama"
+  host: "localhost"
+  port: 11434
+  model_name: "qwen2.5:3b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 2048
+  seed: 42
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "weighted_avg"
+
+replicas_per_case: 5
+max_turns: 5
+
+techniques:
+  - "L2_AT_01"
+  - "L2_AT_02"
+  - "L2_AT_03"
+
+metrics:
+  - "L2_ME_01"
+  - "L2_ME_02"
+  - "L2_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"

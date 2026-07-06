@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Norn Campaign Report — {{ data.campaign.name if data.campaign else "Unknown" }}</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 2rem; }
+        h1, h2, h3 { color: #58a6ff; }
+        .section { margin: 2rem 0; padding: 1.5rem; background: #161b22; border-radius: 8px; border: 1px solid #30363d; }
+        .metric-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 1rem; }
+        .metric-card { padding: 1rem; background: #21262d; border-radius: 6px; border: 2px solid #30363d; cursor: pointer; transition: border-color 0.2s; }
+        .metric-card:hover { border-color: #58a6ff; }
+        .metric-card.pass { border-color: #238636; }
+        .metric-card.fail { border-color: #da3633; }
+        .metric-value { font-size: 2rem; font-weight: bold; }
+        .metric-name { color: #8b949e; font-size: 0.85rem; text-transform: uppercase; margin-top: 0.5rem; }
+        .pass-badge { color: #3fb950; }
+        .fail-badge { color: #f85149; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { padding: 0.5rem; text-align: left; border-bottom: 1px solid #30363d; }
+        th { color: #8b949e; font-weight: 600; }
+        .evidence-panel { display: none; margin-top: 1rem; padding: 1rem; background: #0d1117; border-radius: 4px; }
+        .evidence-panel.show { display: block; }
+        .prompt-block, .response-block { padding: 0.5rem 0.75rem; margin: 0.5rem 0; border-radius: 4px; font-family: monospace; font-size: 0.85rem; white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; }
+        .prompt-block { background: #1a1f2e; border-left: 3px solid #f0883e; }
+        .response-block { background: #1a1f2e; border-left: 3px solid #58a6ff; }
+        .section-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+        .summary-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1rem; }
+        .summary-item { padding: 1rem; background: #21262d; border-radius: 6px; text-align: center; }
+        .summary-label { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; }
+        .summary-value { font-size: 1.5rem; font-weight: bold; margin-top: 0.25rem; }
+        .severity-low { color: #3fb950; }
+        .severity-medium { color: #d29922; }
+        .severity-high { color: #f0883e; }
+        .severity-critical { color: #f85149; }
+    </style>
+</head>
+<body>
+{% set campaign = data.campaign or {} %}
+{% set config = data.config or {} %}
+{% set test_cases = data.test_cases or [] %}
+{% set replicas = data.replicas or [] %}
+{% set decisions = data.decisions or [] %}
+{% set metrics_aggr = data.metric_aggregates or [] %}
+{% set risks = data.risks or [] %}
+{% set tool_calls = data.tool_calls or [] %}
+{% set kill_chains = data.kill_chains or [] %}
+
+<h1>Norn Red Teaming Report</h1>
+<h2 style="color: #8b949e; font-weight: 400;">Campaign: {{ campaign.get('name', 'Unknown') }} (ID: {{ campaign_id }})</h2>
+
+<!-- Summary -->
+<div class="section">
+    <h3>Summary</h3>
+    <div class="summary-row">
+        <div class="summary-item">
+            <div class="summary-label">Layer</div>
+            <div class="summary-value">{{ campaign.get('layer', '-') }}</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-label">State</div>
+            <div class="summary-value">{{ campaign.get('state', '-') }}</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-label">Test Cases</div>
+            <div class="summary-value">{{ test_cases|length }}</div>
+        </div>
+        <div class="summary-item">
+            <div class="summary-label">Replicas</div>
+            <div class="summary-value">{{ replicas|length }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Model Config -->
+<div class="section">
+    <h3>Model Configuration</h3>
+    <table>
+        <tr><th>Property</th><th>Value</th></tr>
+        <tr><td>Provider</td><td>{{ config.get('model', {}).get('provider', '-') }}</td></tr>
+        <tr><td>Model</td><td>{{ config.get('model', {}).get('model_name', '-') }}</td></tr>
+        <tr><td>Temperature</td><td>{{ config.get('model', {}).get('temperature', '-') }}</td></tr>
+        <tr><td>Replicas per case</td><td>{{ config.get('replicas_per_case', '-') }}</td></tr>
+        <tr><td>Scoring Mode</td><td>{{ config.get('scoring', {}).get('mode', '-') }}</td></tr>
+    </table>
+</div>
+
+<!-- Metrics -->
+<div class="section">
+    <h3>Security Metrics</h3>
+    <div class="metric-cards">
+        {% for m in metrics_aggr %}
+        <div class="metric-card {{ 'pass' if (m.mean is defined and m.mean < 0.1) else 'fail' }}">
+            <div class="metric-value">{{ "%.4f"|format(m.mean if m.mean is defined else 0) }}</div>
+            <div class="metric-name">{{ m.metric_id if m.metric_id else 'Metric' }}
+                <span class="{{ 'pass-badge' if (m.mean is defined and m.mean < 0.1) else 'fail-badge' }}">
+                    {{ 'PASS' if (m.mean is defined and m.mean < 0.1) else 'FAIL' }}
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+        {% if not metrics_aggr %}
+        <p style="color: #8b949e;">No metrics computed yet. Run the campaign first.</p>
+        {% endif %}
+    </div>
+
+    {% if metrics_aggr %}
+    <canvas id="metricsChart" style="max-height: 300px; margin-top: 2rem;"></canvas>
+    {% endif %}
+</div>
+
+<!-- Kill Chain -->
+{% if kill_chains %}
+<div class="section">
+    <h3>Kill Chain Results</h3>
+    <table>
+        <tr><th>Case ID</th><th>L1 Success</th><th>L2 Success</th><th>L3 Success</th><th>KCCR</th></tr>
+        {% for kc in kill_chains %}
+        <tr>
+            <td>{{ kc.case_id }}</td>
+            <td>{{ "Yes" if kc.l1_success else "No" }}</td>
+            <td>{{ "Yes" if kc.l2_success else "No" }}</td>
+            <td>{{ "Yes" if kc.l3_success else "No" }}</td>
+            <td>{{ "%.4f"|format(kc.kccr) if kc.kccr else '0.0000' }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endif %}
+
+<!-- Risk Assessment -->
+{% if risks %}
+<div class="section">
+    <h3>Risk Assessment</h3>
+    <table>
+        <tr><th>Case</th><th>Exploitation</th><th>Impact</th><th>Stealth</th><th>Severity</th></tr>
+        {% for r in risks %}
+        <tr>
+            <td>{{ r.case_id }}</td>
+            <td>{{ "%.2f"|format(r.exploitation_score if r.exploitation_score else 0) }}</td>
+            <td>{{ "%.2f"|format(r.impact_score if r.impact_score else 0) }}</td>
+            <td>{{ "%.2f"|format(r.stealth_score if r.stealth_score else 0) }}</td>
+            <td class="severity-{{ r.severity }}">{{ r.severity }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endif %}
+
+<!-- Tool Calls (L3) -->
+{% if tool_calls %}
+<div class="section">
+    <h3>Tool Call Events (L3)</h3>
+    <table>
+        <tr><th>Tool</th><th>Parameters</th><th>Authorized</th><th>Turn</th></tr>
+        {% for tc in tool_calls %}
+        <tr>
+            <td>{{ tc.tool_name }}</td>
+            <td style="font-family: monospace; font-size: 0.8rem; max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
+                {{ tc.tool_params or '-' }}
+            </td>
+            <td>{{ "Yes" if tc.is_authorized else "No" }}</td>
+            <td>{{ tc.turn }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endif %}
+
+<script>
+    // Chart.js metrics visualization
+    {% if metrics_aggr %}
+    const ctx = document.getElementById('metricsChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: [{% for m in metrics_aggr %}'{{ m.metric_id }}'{{ ',' if not loop.last }}{% endfor %}],
+            datasets: [{
+                label: 'Metric Value',
+                data: [{% for m in metrics_aggr %}{{ m.mean if m.mean else 0 }}{{ ',' if not loop.last }}{% endfor %}],
+                backgroundColor: [{% for m in metrics_aggr %}'{{ "#3fb950" if (m.mean is defined and m.mean < 0.1) else "#f85149" }}'{{ ',' if not loop.last }}{% endfor %}],
+                borderColor: '#30363d',
+                borderWidth: 1,
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 1.0,
+                    ticks: { color: '#8b949e' },
+                    grid: { color: '#21262d' },
+                },
+                x: {
+                    ticks: { color: '#8b949e' },
+                    grid: { display: false },
+                }
+            }
+        }
+    });
+    {% endif %}
+</script>
+
+<footer style="margin-top: 3rem; padding: 1rem; text-align: center; color: #484f58; font-size: 0.8rem;">
+    Generated by Norn — LLM Red Teaming Framework
+</footer>
+</body>
+</html>

@@ -1,0 +1,49 @@
+# Norn Lab Experiment — L2: RAG Systems
+# Model: Gemma 4 26B
+# Lab target: web app at http://localhost:8085/v1/l2
+#
+# Gemma 4 26B MoE (17GB, 256K context). MoE with 128 experts.
+#
+# A/B Hardening Protocol:
+#   Config A (baseline):  L2_HARDENING=false on target
+#   Config B (hardened):  L2_HARDENING=true  on target
+#   See examples/lab/README.md for full execution protocol.
+
+campaign_name: "Lab L2 - Gemma 4 26B"
+layer: "L2"
+description: "L2 audit against Gemma 4 26B via RAG app endpoint. Covers all 3 L2 attack techniques with R=5 replicas."
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l2"
+  api_key: "not-needed"
+  model_name: "gemma4:31b-cloud"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 256
+  seed: 42
+  timeout: 600.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "weighted_avg"
+
+replicas_per_case: 5
+max_turns: 5
+
+techniques:
+  - "L2_AT_01"
+  - "L2_AT_02"
+  - "L2_AT_03"
+
+metrics:
+  - "L2_ME_01"
+  - "L2_ME_02"
+  - "L2_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

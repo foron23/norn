@@ -1,0 +1,34 @@
+campaign_name: "RAG Poisoning Audit"
+layer: "L2"
+description: "Security assessment of RAG pipeline against indirect injection and poisoning"
+
+model:
+  provider: "ollama"
+  model_name: "mistral:7b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 2048
+  seed: 42
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "weighted_avg"
+
+replicas_per_case: 5
+max_turns: 5
+
+techniques:
+  - "L2_AT_01"
+  - "L2_AT_02"
+  - "L2_AT_03"
+
+metrics:
+  - "L2_ME_01"
+  - "L2_ME_02"
+  - "L2_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"

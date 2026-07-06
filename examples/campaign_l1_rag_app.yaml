@@ -1,0 +1,48 @@
+# Norn Campaign Configuration
+# L1 LLM Standalone audit targeting the RAG app's L1 endpoint.
+# /v1/l1/chat/completions bypasses retrieval, testing the raw model.
+#
+# NOTE: Only 4 of 10 L1 techniques have default probes:
+#   L1_AT_01 (Direct Injection), L1_AT_02 (Roleplay Jailbreak),
+#   L1_AT_06 (System Prompt Leakage), L1_AT_10 (Policy Evasion).
+#   L1_AT_03-05, L1_AT_07-09 are skipped. Use a corpus directory to add probes.
+
+campaign_name: "RAG App Audit - L1 Standalone"
+layer: "L1"
+description: "L1 security assessment of standalone model (qwen2.5:3b) via OpenAI-compatible endpoint without retrieval"
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l1"
+  model_name: "qwen2.5:3b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 2048
+  seed: 42
+  timeout: 120.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "majority"
+
+replicas_per_case: 2
+max_turns: 5
+
+techniques:
+  - "L1_AT_01"
+  - "L1_AT_02"
+  - "L1_AT_06"
+  - "L1_AT_10"
+
+metrics:
+  - "L1_ME_01"
+  - "L1_ME_02"
+  - "L1_ME_03"
+  - "L1_ME_04"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

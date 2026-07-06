@@ -1,0 +1,60 @@
+# Norn Lab Experiment — L1: LLM Standalone
+# Model: Gemma 3 4B
+# Lab target: web app at localhost:8085/v1/l1
+#
+# NOTE: The thesis references "Gemma 4 (e4B)". The closest available
+# Ollama model tag is gemma3:4b. Adjust this tag after verifying with
+# `ollama list` or `ollama pull gemma3:4b`.
+#
+# A/B Hardening Protocol:
+#   Config A (baseline):  L1_HARDENING=false on target
+#   Config B (hardened):  L1_HARDENING=true  on target
+#   Run the SAME campaign twice — once per config — then compare metrics.
+#   See examples/lab/README.md for full execution protocol.
+
+campaign_name: "Lab L1 - Gemma 3 4B"
+layer: "L1"
+description: "L1 standalone audit against Gemma 3 4B via web app endpoint. Covers all 10 L1 attack techniques with R=5 replicas."
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l1"
+  api_key: "not-needed"
+  model_name: "gemma3:4b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 256
+  seed: 42
+  timeout: 600.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "majority"
+
+replicas_per_case: 5
+max_turns: 10
+
+techniques:
+  - "L1_AT_01"
+  - "L1_AT_02"
+  - "L1_AT_03"
+  - "L1_AT_04"
+  - "L1_AT_05"
+  - "L1_AT_06"
+  - "L1_AT_07"
+  - "L1_AT_08"
+  - "L1_AT_09"
+  - "L1_AT_10"
+
+metrics:
+  - "L1_ME_01"
+  - "L1_ME_02"
+  - "L1_ME_03"
+  - "L1_ME_04"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

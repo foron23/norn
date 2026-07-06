@@ -1,0 +1,42 @@
+# Norn Campaign Configuration
+# L3 Agent audit targeting the RAG app's L3 endpoint.
+# /v1/l3/chat/completions enables tool invocation and multi-step agent behavior.
+
+campaign_name: "RAG App Audit - L3 Agent"
+layer: "L3"
+description: "L3 security assessment of agentic system with tool access (qwen2.5:3b) via OpenAI-compatible endpoint"
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l3"
+  model_name: "qwen2.5:3b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 2048
+  seed: 42
+  timeout: 120.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "veto"
+
+replicas_per_case: 2
+max_turns: 5
+max_tool_calls: 5
+
+techniques:
+  - "L3_AT_01"
+  - "L3_AT_02"
+  - "L3_AT_03"
+
+metrics:
+  - "L3_ME_01"
+  - "L3_ME_02"
+  - "L3_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

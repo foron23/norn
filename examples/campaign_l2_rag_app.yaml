@@ -1,0 +1,42 @@
+# Norn Campaign Configuration
+# L2 RAG audit targeting the RAG app via its OpenAI-compatible endpoint.
+# The RAG app on localhost:8085 exposes /v1/chat/completions which
+# runs the full retrieval-augmented generation pipeline.
+
+campaign_name: "RAG App Audit - Full Pipeline"
+layer: "L2"
+description: "Security assessment of RAG pipeline via OpenAI-compatible endpoint on localhost:8085 (qwen2.5:3b + pgvector)"
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l2"
+  model_name: "qwen2.5:3b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 2048
+  seed: 42
+  timeout: 300.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "weighted_avg"
+
+replicas_per_case: 3
+max_turns: 5
+
+techniques:
+  - "L2_AT_01"
+  - "L2_AT_02"
+  - "L2_AT_03"
+
+metrics:
+  - "L2_ME_01"
+  - "L2_ME_02"
+  - "L2_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

@@ -1,0 +1,52 @@
+# Norn Lab Experiment — L2: RAG Systems
+# Model: Llama 3.1 8B
+# Lab target: web app at localhost:8085/v1 (L2 uses /v1, not /v1/l2)
+#
+# The RAG pipeline uses PostgreSQL + pgvector (HNSW index, top-k=5)
+# with nomic-embed-text for embeddings. Retrieval context is assembled
+# server-side and passed to the generation model.
+#
+# A/B Hardening Protocol:
+#   Config A (baseline):  L2_HARDENING=false on target (no RetrievalFilter)
+#   Config B (hardened):  L2_HARDENING=true  on target (RetrievalFilter active)
+#   Run the SAME campaign twice — once per config — then compare metrics.
+#   See examples/lab/README.md for full execution protocol.
+
+campaign_name: "Lab L2 - Llama 3.1 8B + RAG"
+layer: "L2"
+description: "L2 RAG audit against Llama 3.1 8B with PostgreSQL pgvector backend. Covers all 3 L2 attack techniques (indirect injection, index poisoning, context manipulation) with R=5 replicas."
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l2"
+  api_key: "not-needed"
+  model_name: "llama3.1:8b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 256
+  seed: 42
+  timeout: 600.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "weighted_avg"
+
+replicas_per_case: 5
+max_turns: 5
+
+techniques:
+  - "L2_AT_01"
+  - "L2_AT_02"
+  - "L2_AT_03"
+
+metrics:
+  - "L2_ME_01"
+  - "L2_ME_02"
+  - "L2_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

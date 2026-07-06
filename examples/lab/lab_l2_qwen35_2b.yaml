@@ -1,0 +1,49 @@
+# Norn Lab Experiment — L2: RAG Systems
+# Model: Qwen 3.5 2B
+# Lab target: web app at http://localhost:8085/v1
+#
+# Qwen 3.5:2b — fastest tool-calling model (2.7GB, 256K context). Supports native Ollama function calling.#
+# A/B Hardening Protocol:
+#   Config A (baseline):  L2_HARDENING=false on target
+#   Config B (hardened):  L2_HARDENING=true  on target
+#   Run the SAME campaign twice — once per config — then compare metrics.
+#   See examples/lab/README.md for full execution protocol.
+
+campaign_name: "Lab L2 - Qwen 3.5 2B"
+layer: "L2"
+description: "l2 audit against Qwen 3.5 2B via web app endpoint. Covers all 3 L2 attack techniques with R=5 replicas."
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l2"
+  api_key: "not-needed"
+  model_name: "qwen3.5:2b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 256
+  seed: 42
+  timeout: 600.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "weighted_avg"
+
+replicas_per_case: 5
+max_turns: 5
+
+techniques:
+  - "L2_AT_01"
+  - "L2_AT_02"
+  - "L2_AT_03"
+
+metrics:
+  - "L2_ME_01"
+  - "L2_ME_02"
+  - "L2_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

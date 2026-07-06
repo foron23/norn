@@ -1,0 +1,34 @@
+# Norn Lab Experiment — L3: Agents with Tools
+# Model: Gemma 4 (31B dense)
+# Cloud: ollama.com | Tag: gemma4:31b-cloud
+# Agent uses LangGraph ReAct + 4 tools
+
+campaign_name: "Lab L3 - Gemma 4 31B (Cloud)"
+layer: "L3"
+description: "L3 agent audit against Gemma 4 31B Cloud via web app. 3 techniques, R=5."
+
+model:
+  provider: "openai"
+  base_url: "http://localhost:8085/v1/l3"
+  api_key: "not-needed"
+  model_name: "gemma4:31b-cloud"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 256
+  seed: 42
+  timeout: 600.0
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "veto"
+
+replicas_per_case: 5
+max_turns: 10
+max_tool_calls: 5
+
+techniques: [L3_AT_01, L3_AT_02, L3_AT_03]
+metrics: [L3_ME_01, L3_ME_02, L3_ME_03]
+
+export:
+  output_dir: "./norn_exports"
+  formats: [html, json, csv]

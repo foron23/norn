@@ -1,0 +1,36 @@
+campaign_name: "Agent Tool Abuse Audit"
+layer: "L3"
+description: "Security audit of agentic system with tool access"
+
+model:
+  provider: "ollama"
+  model_name: "qwen2.5:7b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 2048
+  seed: 42
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "veto"
+
+replicas_per_case: 5
+max_turns: 10
+max_tool_calls: 5
+
+techniques:
+  - "L3_AT_01"
+  - "L3_AT_02"
+  - "L3_AT_03"
+
+metrics:
+  - "L3_ME_01"
+  - "L3_ME_02"
+  - "L3_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"
