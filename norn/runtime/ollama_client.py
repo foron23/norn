@@ -56,7 +56,10 @@ class OllamaClient:
         url = f"{model_config.scheme}://{model_config.host}:{model_config.port}/api/chat"
         data = json.dumps(body).encode("utf-8")
 
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "norn/0.1.0",
+        }
         if model_config.api_key:
             headers["Authorization"] = f"Bearer {model_config.api_key}"
 
@@ -138,12 +141,15 @@ class OllamaClient:
         return response_text, tokens_in, tokens_out, latency_ms, tool_calls_raw if tool_calls_raw else None, None
 
     @classmethod
-    def list_models(cls, host: str, port: int, timeout: float = 5.0, scheme: str = "http") -> list[str]:
+    def list_models(cls, host: str, port: int, timeout: float = 5.0, scheme: str = "http", api_key: str | None = None) -> list[str]:
         """Return list of available model names from the Ollama server."""
         import urllib.request
         import json
         url = f"{scheme}://{host}:{port}/api/tags"
-        req = urllib.request.Request(url)
+        headers = {"User-Agent": "norn/0.1.0"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        req = urllib.request.Request(url, headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read())
             return [m.get("name", "") for m in data.get("models", [])]

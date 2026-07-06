@@ -52,7 +52,10 @@ class OpenAICompatibleClient:
         url = f"{base_url}/chat/completions"
         data = json.dumps(body).encode("utf-8")
 
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "User-Agent": "norn/0.1.0",
+        }
         if model_config.api_key:
             headers["Authorization"] = f"Bearer {model_config.api_key}"
 

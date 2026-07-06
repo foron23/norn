@@ -141,7 +141,8 @@ def _validate_ollama_connection(model_config: ModelConfig) -> None:
     try:
         available = OllamaClient.list_models(
             model_config.host, model_config.port,
-            timeout=5.0, scheme=model_config.scheme
+            timeout=5.0, scheme=model_config.scheme,
+            api_key=model_config.api_key,
         )
         # Exact match: strip :tag suffix from available names, compare base names
         available_base = [m.split(":")[0] for m in available]
