@@ -11,9 +11,6 @@ reliable, reproducible LLM security audits.
 
 > Point Norn at an LLM application, run a campaign, and trust the metrics in the report.
 
-Norn was developed as part of the TFM (Master's thesis) *"Red teaming de aplicaciones LLM"*.
-It is a research tool for the academic security evaluation of LLM applications.
-
 ---
 
 ## Table of Contents
