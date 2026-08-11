@@ -26,7 +26,12 @@ class OllamaClient:
 
         Args:
             retry_attempts: Max HTTP attempts per request (1 disables retries).
+
+        Raises:
+            ValueError: If ``retry_attempts`` is less than 1.
         """
+        if retry_attempts < 1:
+            raise ValueError("retry_attempts must be >= 1")
         self.retry_attempts = retry_attempts
 
     def _request(self, url: str, headers: dict, body: dict, timeout: float) -> httpx.Response:
