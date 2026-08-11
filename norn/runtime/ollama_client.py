@@ -67,7 +67,6 @@ class OllamaClient:
         # Coerce seed: None → 0 (Ollama sentinel for "random seed")
         seed = model_config.seed if model_config.seed is not None else 0
 
-        # max_tokens maps to Ollama's num_predict option
         body = {
             "model": model_config.model_name,
             "messages": [{"role": "user", "content": prompt}],
@@ -81,6 +80,51 @@ class OllamaClient:
             },
         }
 
+        return self._chat_request(model_config, body)
+
+    def chat_messages(
+        self,
+        model_config: ModelConfig,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+    ) -> tuple[str, int, int, float, list[dict] | None, None]:
+        """Send a multi-message chat request with optional tool schemas (NOR-01).
+
+        Used by the L3 agent loop: sends the full accumulated message history
+        plus the tool schemas the model may call. ``chat()`` is kept intact
+        for backward compatibility.
+
+        Args:
+            model_config: Model configuration.
+            messages: Full message history (system/user/assistant/tool roles).
+            tools: Optional list of tool schemas (OpenAI/Ollama format).
+
+        Returns:
+            Same 6-tuple as :meth:`chat`.
+        """
+        seed = model_config.seed if model_config.seed is not None else 0
+
+        body = {
+            "model": model_config.model_name,
+            "messages": messages,
+            "stream": False,
+            "keep_alive": "5m",
+            "options": {
+                "temperature": model_config.temperature,
+                "top_p": model_config.top_p,
+                "seed": seed,
+                "num_predict": model_config.max_tokens,
+            },
+        }
+        if tools:
+            body["tools"] = tools
+
+        return self._chat_request(model_config, body)
+
+    def _chat_request(
+        self, model_config: ModelConfig, body: dict
+    ) -> tuple[str, int, int, float, list[dict] | None, None]:
+        """POST a chat body and parse the response (shared by chat/chat_messages)."""
         url = f"{model_config.scheme}://{model_config.host}:{model_config.port}/api/chat"
 
         headers = {

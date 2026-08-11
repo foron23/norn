@@ -63,8 +63,6 @@ class OpenAICompatibleClient:
                              (connection refused).
             TimeoutError: When the request exceeds the configured timeout.
         """
-        # ── Request Construction ──────────────────────────────────────────
-
         body = {
             "model": model_config.model_name,
             "messages": [{"role": "user", "content": prompt}],
@@ -72,10 +70,50 @@ class OpenAICompatibleClient:
             "top_p": model_config.top_p,
             "max_tokens": model_config.max_tokens,
         }
-        # OpenAI API: seed must be omitted if None
-        # (different from Ollama's 0 sentinel)
         if model_config.seed is not None:
             body["seed"] = model_config.seed
+
+        return self._chat_request(model_config, body)
+
+    def chat_messages(
+        self,
+        model_config: ModelConfig,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+    ) -> tuple[str, int, int, float, list[dict] | None, dict | None]:
+        """Send a multi-message chat request with optional tool schemas (NOR-01).
+
+        Used by the L3 agent loop: sends the full accumulated message history
+        plus the tool schemas the model may call. ``chat()`` is kept intact
+        for backward compatibility.
+
+        Args:
+            model_config: Model configuration.
+            messages: Full message history (system/user/assistant/tool roles).
+            tools: Optional list of tool schemas in OpenAI chat format.
+
+        Returns:
+            Same 6-tuple as :meth:`chat`.
+        """
+        body = {
+            "model": model_config.model_name,
+            "messages": messages,
+            "temperature": model_config.temperature,
+            "top_p": model_config.top_p,
+            "max_tokens": model_config.max_tokens,
+        }
+        if model_config.seed is not None:
+            body["seed"] = model_config.seed
+        if tools:
+            body["tools"] = tools
+
+        return self._chat_request(model_config, body)
+
+    def _chat_request(
+        self, model_config: ModelConfig, body: dict
+    ) -> tuple[str, int, int, float, list[dict] | None, dict | None]:
+        """POST a chat body and parse the response (shared by chat/chat_messages)."""
+        # ── Request Construction ──────────────────────────────────────────
 
         base_url = model_config.base_url.rstrip("/")
         url = f"{base_url}/chat/completions"
