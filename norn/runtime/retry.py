@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime
 import email.utils
+import math
 import random
 import time
 
@@ -38,11 +39,15 @@ def parse_retry_after(resp: httpx.Response, default: float) -> float:
     raw = resp.headers.get("Retry-After")
     if raw is None:
         return default
-    # Format 1: delta-seconds.
+    # Format 1: delta-seconds. Only accept finite, non-negative values —
+    # remote input must not reach time.sleep() as NaN/inf (OverflowError).
     try:
-        return max(default, float(raw))
+        seconds = float(raw)
     except ValueError:
         pass
+    else:
+        if math.isfinite(seconds) and seconds >= 0:
+            return max(default, seconds)
     # Format 2: HTTP-date.
     try:
         retry_at = email.utils.parsedate_to_datetime(raw)

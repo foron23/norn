@@ -6,6 +6,8 @@ actionable error, and ``export_campaign`` must keep falling back gracefully.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from norn.runtime.campaign import (
@@ -36,4 +38,6 @@ def test_export_campaign_falls_back_on_legacy_config(in_memory_db, tmp_path, mon
     monkeypatch.chdir(tmp_path)
     results = export_campaign(in_memory_db, cid, fmt="json")
     assert len(results) >= 1
-    assert results[0].path
+    path = Path(results[0].path)
+    assert path.exists(), f"export file not written: {path}"
+    assert "norn_exports" in path.parts, f"export not under norn_exports: {path}"

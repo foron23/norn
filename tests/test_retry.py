@@ -30,10 +30,12 @@ def test_parse_retry_after_numeric_lower_than_default():
 
 def test_parse_retry_after_http_date():
     """HTTP-date Retry-After (RFC 9110) is converted to a delay in seconds."""
-    future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=10)
+    future = datetime.datetime.now(datetime.UTC) + datetime.timedelta(seconds=60)
     resp = httpx.Response(429, headers={"Retry-After": format_datetime(future, usegmt=True)})
     delay = parse_retry_after(resp, 1.0)
-    assert delay >= 9.0
+    # Wide band: proves the date was parsed (delay >> default) without
+    # depending on tight timing between formatting and parsing.
+    assert 30.0 <= delay <= 61.0
 
 
 def test_parse_retry_after_past_date_falls_back():
@@ -47,6 +49,13 @@ def test_parse_retry_after_invalid_falls_back():
     """An unparseable Retry-After falls back to the default delay."""
     resp = httpx.Response(429, headers={"Retry-After": "not-a-date"})
     assert parse_retry_after(resp, 2.5) == 2.5
+
+
+def test_parse_retry_after_nan_inf_falls_back():
+    """NaN/inf/negative Retry-After values fall back (never reach time.sleep)."""
+    for bad in ("nan", "inf", "-inf", "-5"):
+        resp = httpx.Response(429, headers={"Retry-After": bad})
+        assert parse_retry_after(resp, 2.5) == 2.5
 
 
 def test_parse_retry_after_missing_returns_default():
