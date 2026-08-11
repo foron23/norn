@@ -262,6 +262,7 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
         judge_provider=config.scoring.judge_provider,
         judge_model=config.scoring.judge_model,
         judge_sample_rate=config.scoring.judge_sample_rate,
+        judge_api_key=model_config.api_key,
     )
     test_cases = repo.get_test_cases(campaign_id)
     total_expected = len(test_cases) * replicas_per_case
@@ -318,12 +319,17 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
                 ) else None
                 decision = scorer.score_response(
                     case.payload, response, case.technique_id, layer, context=context,
+                    split=case.split.value if case.split else None,
                 )
                 acceptance = 1 if (
                     decision.score_value > threshold
                     and decision.status.value != "blocked"
                 ) else 0
-                scoring_repo.insert_decision(replica_id, decision, acceptance_flag=acceptance)
+                decision_id = scoring_repo.insert_decision(replica_id, decision, acceptance_flag=acceptance)
+                # Persist individual votes (heuristic / llm_judge) so FAR/FRR
+                # can use the judge's verdict as compromise ground truth.
+                for voter_type, vote in decision.votes:
+                    scoring_repo.insert_vote(decision_id, voter_type, vote)
 
                 # Store metric observation
                 metrics_repo.insert_observation(
