@@ -298,7 +298,7 @@ running endpoint are skipped automatically.
 ## Constraints
 
 - **Providers:** Ollama and any OpenAI-compatible endpoint. The OpenAI-compatible client
-  uses stdlib `urllib` only — no SDK dependencies.
+  uses `httpx` with automatic retry/backoff for transient failures — no SDK dependencies.
 - **Scoring:** Heuristic rules and hybrid scoring. The `llm_judge` path is simulated (no
   external judge model is called).
 - **Runtime:** Synchronous Python. No async/await.

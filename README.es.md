@@ -300,7 +300,7 @@ vivo. Los tests que requieren un endpoint en ejecución se omiten automáticamen
 ## Restricciones
 
 - **Proveedores:** Ollama y cualquier endpoint compatible con OpenAI. El cliente compatible con
-  OpenAI usa solo `urllib` de la stdlib — sin dependencias de SDK.
+  OpenAI usa `httpx` con retry/backoff automático para fallos transitorios — sin dependencias de SDK.
 - **Scoring:** Reglas heurísticas y scoring híbrido. La ruta `llm_judge` es simulada (no se
   llama a ningún modelo juez externo).
 - **Runtime:** Python síncrono. Sin async/await.

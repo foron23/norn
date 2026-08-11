@@ -15,18 +15,18 @@ from norn.domain.models import (
     ModelConfig,
     RunSummary,
 )
+from norn.export.exporter import ExportFactory
+from norn.metrics.orchestrator import MetricsOrchestrator
 from norn.persistence.database import (
+    CampaignDataCollector,
     CampaignRepository,
     Database,
     MetricsRepository,
     ScoringRepository,
-    CampaignDataCollector,
 )
-from norn.scoring.scorers import build_scorer
-from norn.metrics.orchestrator import MetricsOrchestrator
-from norn.export.exporter import ExportFactory
 from norn.runtime.ollama_client import OllamaConnectionError
 from norn.runtime.providers import build_provider
+from norn.scoring.scorers import build_scorer
 
 
 class ProgressCallback(Protocol):
@@ -53,6 +53,20 @@ def load_probes(layer: str) -> list[dict]:
         probes = get_default_probes(layer)
 
     return probes
+
+
+def _campaign_config_from_db(db: Database, campaign_id: int) -> CampaignConfig:
+    """Rebuild the typed CampaignConfig from a campaign's stored config_json.
+
+    The runtime must use a single typed source of truth instead of re-parsing
+    raw dicts (NOR-04). plan_campaign persists ``config.model_dump_json()``,
+    so this round-trips without data loss.
+    """
+    repo = CampaignRepository(db)
+    campaign = repo.get_campaign(campaign_id)
+    if not campaign:
+        raise ValueError(f"Campaign {campaign_id} not found")
+    return CampaignConfig.model_validate(json.loads(campaign["config_json"]))
 
 
 def plan_campaign(db: Database, config: CampaignConfig) -> int:
@@ -170,12 +184,12 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
     if not campaign:
         raise ValueError(f"Campaign {campaign_id} not found")
 
-    config_data = json.loads(campaign["config_json"])
-    model_config = ModelConfig(**config_data.get("model", {}))
+    config = _campaign_config_from_db(db, campaign_id)
+    model_config = config.model
     layer = campaign["layer"]
-    replicas_per_case = config_data.get("replicas_per_case", 5)
-    scoring_mode = config_data.get("scoring", {}).get("mode", "hybrid")
-    vote_strategy = config_data.get("scoring", {}).get("vote_strategy", "majority")
+    replicas_per_case = config.replicas_per_case
+    scoring_mode = config.scoring.mode.value
+    vote_strategy = config.scoring.vote_strategy.value
 
     repo.update_state(campaign_id, CampaignState.RUNNING)
 
@@ -210,11 +224,11 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
             replica_id = repo.insert_replica(
                 campaign_id, case.case_id, r,
                 temperature=model_config.temperature, top_p=model_config.top_p,
-                seed=config_data.get("model", {}).get("seed", 42) + r,
+                seed=(model_config.seed if model_config.seed is not None else 42) + r,
             )
 
             try:
-                max_turns = config_data.get("max_turns", 1)
+                max_turns = config.max_turns
                 all_tool_calls: list[dict] = []
 
                 for turn in range(max_turns):
@@ -266,7 +280,7 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
                         )
 
                 # Score on final turn's response
-                threshold = config_data.get("scoring", {}).get("acceptance_threshold", 0.5)
+                threshold = config.scoring.acceptance_threshold
                 context = [{"type": "tool_calls", "calls": all_tool_calls}] if (
                     all_tool_calls and layer == "L3"
                 ) else None
@@ -353,8 +367,13 @@ def export_campaign(db: Database, campaign_id: int, fmt: str = "all") -> list:
         raise ValueError(f"Campaign {campaign_id} not found")
 
     data = collector.collect(campaign_id)
-    config = json.loads(campaign.get("config_json", "{}"))
-    output_dir = config.get("export", {}).get("output_dir", "./norn_exports")
+    try:
+        config = _campaign_config_from_db(db, campaign_id)
+    except ValueError:
+        # Legacy campaigns may store an empty/invalid config_json; fall back
+        # to the default export directory.
+        config = None
+    output_dir = config.export.output_dir if config else "./norn_exports"
 
     results = []
     if fmt == "all":
