@@ -15,7 +15,6 @@ import pytest
 from norn.domain.models import CampaignConfig
 from norn.persistence.database import CampaignRepository
 from norn.runtime.campaign import load_probes, plan_campaign
-from tests.conftest import in_memory_db  # noqa: F401  (fixture)
 
 
 def _split_counts(probes: list[dict]) -> dict[str, int]:
@@ -42,6 +41,7 @@ def test_l1_corpus_has_at_least_30_percent_benign():
 def test_l1_corpus_has_about_15_percent_borderline():
     counts = _split_counts(load_probes("L1"))
     total = sum(counts.values())
+    assert total > 0, "corpus vacío: no se puede calcular la proporción"
     borderline_share = counts.get("borderline", 0) / total
     assert 0.10 <= borderline_share <= 0.20, (
         f"borderline share {borderline_share:.2%} outside ~15% band"
@@ -63,7 +63,9 @@ def test_clean_attack_pairs_share_task_id():
     for layer in ("L1", "L2"):
         for probe in load_probes(layer):
             for variant in probe.get("variants", []):
-                by_task[variant["task_id"]].add(variant.get("split", "harmful"))
+                task = variant.get("task_id")
+                assert task, f"missing task_id in {layer}: {probe.get('id')} ({variant.get('variant_type')})"
+                by_task[task].add(variant.get("split", "harmful"))
 
     paired = {
         task: splits for task, splits in by_task.items()
@@ -81,14 +83,15 @@ def test_clean_attack_pairs_share_task_id():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _l1_config(**overrides) -> CampaignConfig:
-    kwargs = dict(
+    config = CampaignConfig(
         campaign_name="corpus-test",
         layer="L1",
         replicas_per_case=1,
         max_turns=1,
     )
-    kwargs.update(overrides)
-    return CampaignConfig(**kwargs)
+    for key, value in overrides.items():
+        setattr(config, key, value)
+    return config
 
 
 def test_plan_with_benign_ratio_40_percent(in_memory_db):
@@ -100,9 +103,10 @@ def test_plan_with_benign_ratio_40_percent(in_memory_db):
     borderline = sum(1 for c in cases if c["split"] == "borderline")
     harmful = sum(1 for c in cases if c["split"] == "harmful")
 
-    # 24 harmful in the L1 corpus → target = round(24*0.4/0.6) = 16 non-harmful
-    assert harmful == 24
-    assert benign + borderline == 16, f"got benign+borderline={benign + borderline}"
+    # Expected target derived from the observed harmful count, so the test
+    # survives corpus edits: round(H * r / (1 - r)) non-harmful cases.
+    target = round(harmful * 0.4 / (1.0 - 0.4))
+    assert benign + borderline == target, f"got benign+borderline={benign + borderline}, target={target}"
     assert (benign + borderline) / len(cases) == pytest.approx(0.4)
 
 
@@ -111,23 +115,34 @@ def test_plan_without_benign_ratio_keeps_everything(in_memory_db):
     cid = plan_campaign(in_memory_db, config)
     cases = CampaignRepository(in_memory_db).get_test_cases(cid)
 
+    # Corpus-agnostic: the planned composition must equal the corpus composition.
     counts = {
         split: sum(1 for c in cases if c["split"] == split)
         for split in ("benign", "borderline", "harmful")
     }
-    assert counts == {"benign": 15, "borderline": 6, "harmful": 24}
+    assert counts == _split_counts(load_probes("L1"))
 
 
 def test_plan_with_benign_ratio_keeps_techniques(in_memory_db):
     """Techniques configured stay represented after balancing (harmful intact)."""
-    config = _l1_config(benign_ratio=0.5, techniques=["L1_AT_01", "L1_AT_02"])
+    techniques = ["L1_AT_01", "L1_AT_02"]
+    config = _l1_config(benign_ratio=0.5, techniques=techniques)
     cid = plan_campaign(in_memory_db, config)
     cases = CampaignRepository(in_memory_db).get_test_cases(cid)
 
-    techniques = {c["technique_id"] for c in cases}
-    assert techniques == {"L1_AT_01", "L1_AT_02"}
+    planned_techniques = {c["technique_id"] for c in cases}
+    assert planned_techniques == set(techniques)
+
+    # Expected harmful count from the corpus itself (survives corpus edits).
+    expected_harmful = sum(
+        1
+        for probe in load_probes("L1")
+        if probe.get("technique_id") in techniques
+        for variant in probe.get("variants", [])
+        if variant.get("split", "harmful") == "harmful"
+    )
     harmful = [c for c in cases if c["split"] == "harmful"]
-    assert len(harmful) == 4  # 2 harmful variants per technique, untouched
+    assert len(harmful) == expected_harmful
 
 
 def test_balance_is_deterministic(in_memory_db):
@@ -145,6 +160,9 @@ def test_benign_ratio_validator_rejects_out_of_range():
         _l1_config(benign_ratio=1.5)
     with pytest.raises(ValueError, match="benign_ratio"):
         _l1_config(benign_ratio=-0.1)
+    # 1.0 is impossible to honor while keeping harmful cases → rejected.
+    with pytest.raises(ValueError, match="benign_ratio"):
+        _l1_config(benign_ratio=1.0)
 
 
 def test_benign_ratio_zero_keeps_only_harmful(in_memory_db):

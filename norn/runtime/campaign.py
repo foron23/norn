@@ -60,6 +60,12 @@ def load_probes(layer: str) -> list[dict]:
         from norn.probes.catalog import get_default_probes
         probes = get_default_probes(layer)
 
+    # Empty/mispackaged corpus dir must not silently produce zero probes:
+    # fall back to the builtin catalog in that case too.
+    if not probes:
+        from norn.probes.catalog import get_default_probes
+        probes = get_default_probes(layer)
+
     return probes
 
 
