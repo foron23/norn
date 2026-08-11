@@ -75,6 +75,7 @@ class ModelConfig(pydantic.BaseModel):
     top_p: float = 0.9
     max_tokens: int = 2048
     seed: int | None = 42
+    system_prompt: str | None = None
 
 
 class ScoringConfig(pydantic.BaseModel):
@@ -101,6 +102,7 @@ class CampaignConfig(pydantic.BaseModel):
     max_turns: int = 10
     max_tool_calls: int = 5
     techniques: list[str] | None = None
+    tools: list[str] = pydantic.Field(default_factory=list)
     export: ExportConfig = pydantic.Field(default_factory=ExportConfig)
 
 
