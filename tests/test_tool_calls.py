@@ -8,23 +8,23 @@ Tests cover:
 """
 from __future__ import annotations
 
-import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
+
+import httpx
 
 from norn.domain.models import ModelConfig
 from norn.persistence.database import CampaignRepository
 from tests.conftest import insert_known_campaign, insert_known_replica
 
+# ── Helper to mock httpx client responses ─────────────────────────────────
 
-# ── Helper to create mock urlopen responses ───────────────────────────────
+def _patch_client(module: str, response_body: dict):
+    """Patch httpx.Client in ``module`` to return a fake posting JSON responses."""
+    from unittest.mock import MagicMock
 
-def _mock_response(json_body: dict) -> MagicMock:
-    """Create a mock HTTP response that returns JSON bytes from .read()."""
-    mock_resp = MagicMock()
-    mock_resp.read.return_value = json.dumps(json_body).encode("utf-8")
-    mock_resp.__enter__.return_value = mock_resp
-    mock_resp.__exit__.return_value = False
-    return mock_resp
+    fake = MagicMock()
+    fake.post.return_value = httpx.Response(200, json=response_body)
+    return patch(f"{module}.httpx.Client", return_value=fake)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -79,7 +79,7 @@ def test_openai_client_parses_tool_calls():
         "usage": {"prompt_tokens": 10, "completion_tokens": 20},
     }
 
-    with patch("urllib.request.urlopen", return_value=_mock_response(response_body)):
+    with _patch_client("norn.runtime.openai_client", response_body):
         result = client.chat(config, "Test prompt")
 
     assert len(result) == 6, f"Expected 6-tuple, got {len(result)}-tuple"
@@ -113,7 +113,7 @@ def test_openai_client_no_tool_calls():
         "usage": {"prompt_tokens": 5, "completion_tokens": 8},
     }
 
-    with patch("urllib.request.urlopen", return_value=_mock_response(response_body)):
+    with _patch_client("norn.runtime.openai_client", response_body):
         result = client.chat(config, "Test prompt")
 
     assert len(result) == 6, f"Expected 6-tuple, got {len(result)}-tuple"
@@ -159,7 +159,7 @@ def test_ollama_client_parses_tool_calls():
         "total_duration": 500000000,
     }
 
-    with patch("urllib.request.urlopen", return_value=_mock_response(response_body)):
+    with _patch_client("norn.runtime.ollama_client", response_body):
         result = client.chat(config, "Test prompt")
 
     assert len(result) == 6, f"Expected 6-tuple, got {len(result)}-tuple"
@@ -194,7 +194,7 @@ def test_ollama_client_no_tool_calls():
         "total_duration": 200000000,
     }
 
-    with patch("urllib.request.urlopen", return_value=_mock_response(response_body)):
+    with _patch_client("norn.runtime.ollama_client", response_body):
         result = client.chat(config, "Test prompt")
 
     assert len(result) == 6, f"Expected 6-tuple, got {len(result)}-tuple"

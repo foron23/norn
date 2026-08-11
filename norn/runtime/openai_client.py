@@ -1,21 +1,45 @@
-"""OpenAI-compatible HTTP client for chat completions via urllib.request.
+"""OpenAI-compatible HTTP client for chat completions via httpx (NOR-05).
 
 Provides synchronous chat() calls to any OpenAI Chat Completions-compatible
-endpoint (OpenAI API, Ollama /v1, vLLM, LM Studio, LocalAI, etc.).
+endpoint (OpenAI API, Ollama /v1, vLLM, LM Studio, LocalAI, etc.), with
+automatic retry/backoff for transient HTTP failures (429, 5xx).
 """
 from __future__ import annotations
 
 import json
-import socket
 import time
-import urllib.error
-import urllib.request
+
+import httpx
 
 from norn.domain.models import ModelConfig
+from norn.runtime.retry import DEFAULT_RETRY_ATTEMPTS, with_retry
 
 
 class OpenAICompatibleClient:
     """Synchronous HTTP client for OpenAI /v1/chat/completions endpoint."""
+
+    def __init__(self, *, retry_attempts: int = DEFAULT_RETRY_ATTEMPTS):
+        """Initialize the client.
+
+        Args:
+            retry_attempts: Max HTTP attempts per request (1 disables retries).
+        """
+        self.retry_attempts = retry_attempts
+
+    def _request(self, url: str, headers: dict, body: dict, timeout: float) -> httpx.Response:
+        """POST JSON payload to ``url`` with retry/backoff.
+
+        Returns the final :class:`httpx.Response` (after retries are
+        exhausted for retryable status codes).
+        """
+        client = httpx.Client(timeout=timeout)
+        try:
+            return with_retry(
+                lambda: client.post(url, headers=headers, json=body),
+                attempts=self.retry_attempts,
+            )
+        finally:
+            client.close()
 
     def chat(self, model_config: ModelConfig, prompt: str) -> tuple[str, int, int, float, list[dict] | None, dict | None]:
         """Send a single-turn chat request to an OpenAI-compatible endpoint.
@@ -50,7 +74,6 @@ class OpenAICompatibleClient:
 
         base_url = model_config.base_url.rstrip("/")
         url = f"{base_url}/chat/completions"
-        data = json.dumps(body).encode("utf-8")
 
         headers = {
             "Content-Type": "application/json",
@@ -59,54 +82,49 @@ class OpenAICompatibleClient:
         if model_config.api_key:
             headers["Authorization"] = f"Bearer {model_config.api_key}"
 
-        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-
         t0 = time.monotonic()
 
         # ── Error Handling ────────────────────────────────────────────────
 
         try:
-            with urllib.request.urlopen(req, timeout=model_config.timeout) as resp:
-                raw = resp.read().decode("utf-8")
-                latency_ms = (time.monotonic() - t0) * 1000.0
-        except urllib.error.HTTPError as exc:
-            if exc.code == 401:
-                raise RuntimeError(
-                    "OpenAI-compatible endpoint returned 401 Unauthorized. "
-                    "Check your api_key in the campaign config."
-                ) from exc
-            elif exc.code == 404:
-                raise RuntimeError(
-                    f"Model '{model_config.model_name}' not found "
-                    f"at {base_url}. "
-                    "Check the model name or base_url."
-                ) from exc
+            resp = self._request(url, headers, body, model_config.timeout)
+        except httpx.TimeoutException as exc:
+            raise TimeoutError(
+                f"OpenAI-compatible request timed out after {model_config.timeout}s."
+            ) from exc
+        except httpx.ConnectError as exc:
+            raise ConnectionError(
+                f"Cannot connect to OpenAI-compatible endpoint "
+                f"at {base_url}. Is the server running?"
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(
+                f"Failed to connect to endpoint at {base_url}: {exc}"
+            ) from exc
+
+        latency_ms = (time.monotonic() - t0) * 1000.0
+
+        if resp.status_code == 401:
+            raise RuntimeError(
+                "OpenAI-compatible endpoint returned 401 Unauthorized. "
+                "Check your api_key in the campaign config."
+            )
+        if resp.status_code == 404:
+            raise RuntimeError(
+                f"Model '{model_config.model_name}' not found "
+                f"at {base_url}. "
+                "Check the model name or base_url."
+            )
+        if resp.status_code >= 400:
             raise RuntimeError(
                 f"OpenAI-compatible endpoint error "
-                f"(HTTP {exc.code}): {exc.reason}"
-            ) from exc
-        except urllib.error.URLError as exc:
-            reason = exc.reason
-            if isinstance(reason, ConnectionRefusedError) or (
-                hasattr(reason, "errno") and reason.errno == 111
-            ):
-                raise ConnectionError(
-                    f"Cannot connect to OpenAI-compatible endpoint "
-                    f"at {base_url}. Is the server running?"
-                ) from exc
-            raise RuntimeError(
-                f"Failed to connect to endpoint at {base_url}: {reason}"
-            ) from exc
-        except socket.timeout as exc:
-            raise TimeoutError(
-                f"OpenAI-compatible request timed out after "
-                f"{model_config.timeout}s."
-            ) from exc
+                f"(HTTP {resp.status_code}): {resp.reason_phrase}"
+            )
 
         # ── Response Parsing ──────────────────────────────────────────────
 
         try:
-            parsed = json.loads(raw)
+            parsed = resp.json()
         except json.JSONDecodeError as exc:
             raise RuntimeError(
                 f"Invalid response from OpenAI-compatible endpoint "
@@ -118,7 +136,7 @@ class OpenAICompatibleClient:
         if not choices:
             raise RuntimeError(
                 f"OpenAI-compatible endpoint returned no choices. "
-                f"Response: {raw[:200]}"
+                f"Response: {str(parsed)[:200]}"
             )
 
         message = choices[0].get("message", {})
