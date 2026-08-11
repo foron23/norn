@@ -187,7 +187,7 @@ def test_l3_without_tools_uses_simple_loop(in_memory_db, monkeypatch):
     client = FakeAgentClient([])
     config = _make_config(tools=[], max_turns=2)  # no tools → legacy loop
 
-    cid, summary = _run(in_memory_db, config, client, monkeypatch)
+    _cid, summary = _run(in_memory_db, config, client, monkeypatch)
     assert summary.failed_replicas == 0
     assert client.chat_calls == 2  # 2 turns × 1 replica
     assert client.calls == []  # chat_messages never used
@@ -198,8 +198,8 @@ def test_l1_with_tools_ignores_tools(in_memory_db, monkeypatch):
     client = FakeAgentClient([])
     config = _make_config(layer="L1", tools=["file_reader"], max_turns=1)
 
-    cid, summary = _run(in_memory_db, config, client, monkeypatch,
-                        payload="What is the capital of France?")
+    _cid, summary = _run(in_memory_db, config, client, monkeypatch,
+                         payload="What is the capital of France?")
     assert summary.failed_replicas == 0
     assert client.chat_calls == 1
     assert client.calls == []
