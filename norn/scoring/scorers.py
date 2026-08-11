@@ -521,22 +521,23 @@ def build_scorer(
 ) -> HeuristicScorer | LLMJudgeScorer | HybridScorer:
     """Factory for scorer instances.
 
-    The ``judge_*`` parameters configure the real LLM judge (NOR-02): a fresh
-    :class:`ModelConfig` is built from the judge provider/model, so the judge
-    can point at a different model (or provider) than the campaign model.
-    Endpoint defaults (base_url/host/port/api_key) are the standard defaults
-    for the judge provider.
+    The ``judge_*`` parameters configure the real LLM judge (NOR-02). The
+    real judge is only activated when ``judge_model`` is set; with the
+    default (``judge_model=None``) no network-backed judge is constructed
+    and ``LLMJudgeScorer`` falls back to the heuristic, so existing hybrid
+    campaigns keep working with zero configuration and the "no provider
+    configured" path stays reachable (review fix).
     """
+    if mode == "heuristic":
+        return HeuristicScorer(custom_rules)
+
     judge_config = ModelConfig(
         provider=judge_provider,
         model_name=judge_model or "llama3.1:8b",
     )
-    if mode == "heuristic":
-        return HeuristicScorer(custom_rules)
-
     judge = LLMJudgeScorer(
-        provider=build_provider(judge_provider),
-        model_config=judge_config,
+        provider=build_provider(judge_provider) if judge_model else None,
+        model_config=judge_config if judge_model else None,
         sample_rate=judge_sample_rate,
     )
     if mode == "llm_judge":

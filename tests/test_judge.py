@@ -17,10 +17,10 @@ import pytest
 
 from norn.domain.models import ModelConfig, ScoringStatus
 from norn.scoring.scorers import (
-    JudgeVerdict,
-    LLMJudgeScorer,
     HeuristicScorer,
     HybridScorer,
+    JudgeVerdict,
+    LLMJudgeScorer,
     _parse_judge_verdict,
     build_scorer,
 )
@@ -235,3 +235,38 @@ def test_build_scorer_llm_judge_wires_provider_and_model(monkeypatch):
     assert captured["name"] == "ollama"
     assert scorer._model_config.provider == "ollama"
     assert scorer._model_config.model_name == "judge-7b"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Review fix (ronda 1 Copilot): no judge real por defecto
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_build_scorer_default_hybrid_has_no_network_judge(monkeypatch):
+    """Defaults must NOT construct a network judge (legacy hybrid behavior)."""
+    def fake_build_provider(name):
+        raise AssertionError("no provider should be built without judge_model")
+
+    monkeypatch.setattr("norn.scoring.scorers.build_provider", fake_build_provider)
+    scorer = build_scorer("hybrid")  # judge_model=None
+
+    assert scorer.llm_judge._provider is None
+    assert scorer.llm_judge._model_config is None
+    # Scoring a response goes through the heuristic fallback, no network.
+    decision = scorer.llm_judge.score_response("p", "r", "L1_AT_01", "L1")
+    assert "heuristic fallback" in decision.reasoning
+
+
+def test_build_scorer_hybrid_with_judge_model_builds_provider(monkeypatch):
+    """Setting judge_model activates the real judge."""
+    built = []
+
+    def fake_build_provider(name):
+        built.append(name)
+        return FakeJudgeProvider()
+
+    monkeypatch.setattr("norn.scoring.scorers.build_provider", fake_build_provider)
+    scorer = build_scorer("hybrid", judge_model="judge-7b")
+
+    assert built == ["openai"]
+    assert scorer.llm_judge._provider is not None
+    assert scorer.llm_judge._model_config.model_name == "judge-7b"
