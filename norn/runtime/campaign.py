@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Protocol
 
@@ -37,19 +38,32 @@ class ProgressCallback(Protocol):
 
 
 def load_probes(layer: str) -> list[dict]:
-    """Load probe payloads from the corpus directory."""
-    probes = []
-    corpus_dir = Path(__file__).resolve().parent.parent / "corpus" / layer.lower() / "adversarial"
+    """Load probe payloads from the corpus directory.
 
-    if corpus_dir.exists():
-        for f in sorted(corpus_dir.glob("*.json")):
-            with open(f) as fp:
-                data = json.load(fp)
-                if isinstance(data, list):
-                    probes.extend(data)
-                else:
-                    probes.append(data)
+    Loads every JSON file under ``corpus/<layer>/`` (both the adversarial/
+    and benign/ subdirectories) so benign and borderline variants are part
+    of the default corpus (NOR-03). Falls back to the builtin catalog when
+    the corpus directory is absent.
+    """
+    probes = []
+    corpus_root = Path(__file__).resolve().parent.parent / "corpus" / layer.lower()
+
+    if corpus_root.exists():
+        for split_dir in sorted(p for p in corpus_root.iterdir() if p.is_dir()):
+            for f in sorted(split_dir.glob("*.json")):
+                with open(f) as fp:
+                    data = json.load(fp)
+                    if isinstance(data, list):
+                        probes.extend(data)
+                    else:
+                        probes.append(data)
     else:
+        from norn.probes.catalog import get_default_probes
+        probes = get_default_probes(layer)
+
+    # Empty/mispackaged corpus dir must not silently produce zero probes:
+    # fall back to the builtin catalog in that case too.
+    if not probes:
         from norn.probes.catalog import get_default_probes
         probes = get_default_probes(layer)
 
@@ -79,6 +93,36 @@ def _campaign_config_from_db(db: Database, campaign_id: int) -> CampaignConfig:
         ) from exc
 
 
+def _balance_cases(cases: list[CaseDescriptor], benign_ratio: float, seed: int | None = None) -> list[CaseDescriptor]:
+    """Sample the non-harmful cases so benign share ≈ ``benign_ratio`` (NOR-03).
+
+    Borderline cases count as non-harmful for balancing. The harmful set is
+    always kept intact (techniques configured must stay represented); the
+    non-harmful set is downsampled deterministically when there are more
+    cases than the ratio allows.
+
+    Rounding: target non-harmful count = round(H * r / (1 - r)), documented
+    so callers can predict the exact proportion for a given corpus.
+    """
+    if benign_ratio <= 0.0:
+        return [c for c in cases if c.split == DataSplit.HARMFUL]
+    if benign_ratio >= 1.0:
+        return cases
+
+    harmful = [c for c in cases if c.split == DataSplit.HARMFUL]
+    non_harmful = [c for c in cases if c.split in (DataSplit.BENIGN, DataSplit.BORDERLINE)]
+    if not harmful or not non_harmful:
+        return cases
+
+    target = round(len(harmful) * benign_ratio / (1.0 - benign_ratio))
+    if target >= len(non_harmful):
+        return cases  # already at or below the requested ratio
+
+    rng = random.Random(seed if seed is not None else 42)
+    sampled = rng.sample(non_harmful, target)
+    return harmful + sampled
+
+
 def plan_campaign(db: Database, config: CampaignConfig) -> int:
     """Phase 1: Validate config, persist campaign, generate test cases."""
     repo = CampaignRepository(db)
@@ -86,6 +130,7 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
 
     probes = load_probes(config.layer)
 
+    cases: list[CaseDescriptor] = []
     case_counter = 0
     techniques_seen: set[str] = set()
 
@@ -114,9 +159,10 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
                     metadata={
                         "variant_type": variant.get("variant_type", "default"),
                         "probe_source": probe.get("id", ""),
+                        "task_id": variant.get("task_id", ""),
                     },
                 )
-                repo.insert_test_case(campaign_id, case)
+                cases.append(case)
 
     from norn.domain.taxonomy import ATTACK_TECHNIQUES
     for tid, tech in ATTACK_TECHNIQUES.items():
@@ -154,6 +200,13 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
             layer=config.layer,
             metadata={"variant_type": "default", "probe_source": "builtin_fallback"},
         )
+        cases.append(case)
+
+    # NOR-03: optional balancing so benign cases are well represented (FRR/TDS)
+    if config.benign_ratio is not None:
+        cases = _balance_cases(cases, config.benign_ratio, seed=config.model.seed)
+
+    for case in cases:
         repo.insert_test_case(campaign_id, case)
 
     return campaign_id
@@ -203,7 +256,13 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
 
     repo.update_state(campaign_id, CampaignState.RUNNING)
 
-    scorer = build_scorer(scoring_mode, vote_strategy)
+    scorer = build_scorer(
+        scoring_mode,
+        vote_strategy,
+        judge_provider=config.scoring.judge_provider,
+        judge_model=config.scoring.judge_model,
+        judge_sample_rate=config.scoring.judge_sample_rate,
+    )
     test_cases = repo.get_test_cases(campaign_id)
     total_expected = len(test_cases) * replicas_per_case
 

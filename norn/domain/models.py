@@ -81,9 +81,18 @@ class ModelConfig(pydantic.BaseModel):
 class ScoringConfig(pydantic.BaseModel):
     mode: ScoringMode = ScoringMode.HYBRID
     heuristic_rules: dict[str, list[str]] = pydantic.Field(default_factory=dict)
+    judge_provider: str = "openai"
     judge_model: str | None = None
+    judge_sample_rate: float = 1.0
     vote_strategy: VoteStrategy = VoteStrategy.MAJORITY
     acceptance_threshold: float = 0.5
+
+    @pydantic.field_validator("judge_sample_rate")
+    @classmethod
+    def _validate_sample_rate(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("judge_sample_rate must be in [0.0, 1.0]")
+        return v
 
 
 class ExportConfig(pydantic.BaseModel):
@@ -102,8 +111,19 @@ class CampaignConfig(pydantic.BaseModel):
     max_turns: int = 10
     max_tool_calls: int = 5
     techniques: list[str] | None = None
+    benign_ratio: float | None = None
     tools: list[str] = pydantic.Field(default_factory=list)
     export: ExportConfig = pydantic.Field(default_factory=ExportConfig)
+
+    @pydantic.field_validator("benign_ratio")
+    @classmethod
+    def _validate_benign_ratio(cls, v: float | None) -> float | None:
+        # 1.0 is rejected: keeping every harmful case AND reaching 100%
+        # non-harmful is impossible, so the API would silently mean
+        # "no balancing" — fail fast instead.
+        if v is not None and not 0.0 <= v < 1.0:
+            raise ValueError("benign_ratio must be in [0.0, 1.0)")
+        return v
 
 
 # ── Runtime Dataclasses ──────────────────────────────────────────────────────
