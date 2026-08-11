@@ -202,7 +202,13 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
 
     repo.update_state(campaign_id, CampaignState.RUNNING)
 
-    scorer = build_scorer(scoring_mode, vote_strategy)
+    scorer = build_scorer(
+        scoring_mode,
+        vote_strategy,
+        judge_provider=config.scoring.judge_provider,
+        judge_model=config.scoring.judge_model,
+        judge_sample_rate=config.scoring.judge_sample_rate,
+    )
     test_cases = repo.get_test_cases(campaign_id)
     total_expected = len(test_cases) * replicas_per_case
 
