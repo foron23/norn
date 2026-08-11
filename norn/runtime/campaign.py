@@ -244,11 +244,11 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
 
             try:
                 if use_agent_loop:
-                    response, tokens_in, tokens_out, latency_ms, all_tool_calls = _run_agent_replica(
+                    response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_agent_replica(
                         client, repo, replica_id, case, model_config, config, executor,
                     )
                 else:
-                    response, tokens_in, tokens_out, latency_ms, all_tool_calls = _run_simple_replica(
+                    response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_simple_replica(
                         client, repo, replica_id, case, model_config, config,
                     )
 
@@ -449,17 +449,25 @@ def _run_agent_replica(
         )
 
         assistant_msg: dict = {"role": "assistant", "content": response}
+        # Only the subset we actually execute goes into the history, so every
+        # tool_call has a matching tool message. Normalize ids so pairing
+        # works even if the provider omits them.
+        executed: list[dict] = []
         if tool_calls:
-            assistant_msg["tool_calls"] = tool_calls
+            for i, tc in enumerate(list(tool_calls)[: config.max_tool_calls]):
+                if not tc.get("id"):
+                    tc = {**tc, "id": f"call_{turn}_{i}"}
+                executed.append(tc)
+            assistant_msg["tool_calls"] = executed
         messages.append(assistant_msg)
 
         final_response = response
 
-        if not tool_calls:
+        if not executed:
             break
 
-        # Execute up to max_tool_calls per turn; persist every executed call
-        for tc in list(tool_calls)[: config.max_tool_calls]:
+        # Execute every tool call persisted in the assistant message
+        for tc in executed:
             exec_result = executor.execute(tc)
             repo.insert_tool_call(
                 replica_id=replica_id,

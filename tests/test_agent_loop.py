@@ -284,3 +284,95 @@ def test_executor_web_search_and_send_policies(tmp_path):
 
     r = ex.execute({"function": {"name": "send", "arguments": {"to": "a@internal-domain.com", "subject": "s", "body": "b"}}})
     assert r["authorized"] is True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Review fixes (ronda 1 Copilot)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_executor_schemas_expose_only_enabled_tools(tmp_path):
+    """Allowlist: schemas() and execute() respect the configured tool set."""
+    ex = ToolExecutor(["file_reader"], sandbox_dir=tmp_path)
+    assert ex.names() == ["file_reader"]
+    assert [s["function"]["name"] for s in ex.schemas()] == ["file_reader"]
+
+    # Calling a registered-but-disabled tool is rejected, not executed.
+    r = ex.execute({"id": "c", "function": {"name": "web_search", "arguments": {"query": "x"}}})
+    assert r["authorized"] is False
+    assert "not enabled" in r["result"]
+
+
+def test_executor_send_domain_bypass_blocked(tmp_path):
+    """Substring bypass like user@company.com.evil.com must be blocked."""
+    ex = ToolExecutor(["send"], sandbox_dir=tmp_path)
+
+    def send(to):
+        return ex.execute({"function": {"name": "send", "arguments": {"to": to, "subject": "s", "body": "b"}}})
+
+    assert send("user@company.com.evil.com")["authorized"] is False
+    assert send("user@notcompany.com")["authorized"] is False
+    assert send("user@sandbox.evil.com")["authorized"] is False
+    assert send("user@sub.company.com")["authorized"] is True
+    assert send("user@internal-domain.com")["authorized"] is True
+    assert send("user@sandbox")["authorized"] is True  # lab hostname
+
+
+def test_executor_handler_exception_is_not_authorized(tmp_path):
+    """A handler crash marks the call unauthorized and reports the error."""
+    def boom(args):
+        raise OSError("disk on fire")
+
+    ex = ToolExecutor(["file_reader"], sandbox_dir=tmp_path)
+    ex.register("boom_tool", "boom", {"type": "object", "properties": {}}, boom)
+    # register() adds to the registry; enable it explicitly for the test
+    ex._enabled.add("boom_tool")
+
+    r = ex.execute({"id": "c", "function": {"name": "boom_tool", "arguments": "{}"}})
+    assert r["authorized"] is False
+    assert r["error"] is not None
+    assert "disk on fire" in r["result"]
+
+
+def test_agent_loop_truncates_tool_calls_and_normalizes_ids(in_memory_db, tmp_path, monkeypatch):
+    """max_tool_calls: assistant history only contains executed calls with ids."""
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    # Model emits 3 tool calls (2 without id) but max_tool_calls=1
+    client = FakeAgentClient([
+        {
+            "content": "Calling tools.",
+            "tool_calls": [
+                {"type": "function", "function": {"name": "web_search", "arguments": {"query": "a"}}},  # no id
+                {"id": "call_b", "type": "function", "function": {"name": "web_search", "arguments": {"query": "b"}}},
+                {"id": "call_c", "type": "function", "function": {"name": "web_search", "arguments": {"query": "c"}}},
+            ],
+        },
+        {"content": "Done.", "tool_calls": None},
+    ])
+    config = _make_config(tools=["web_search"], max_tool_calls=1)
+
+    monkeypatch.setattr("norn.runtime.campaign.ToolExecutor",
+                        lambda tools, **kw: ToolExecutor(tools, sandbox_dir=sandbox, **kw))
+
+    cid, summary = _run(in_memory_db, config, client, monkeypatch)
+    assert summary.failed_replicas == 0
+
+    # Only 1 tool call executed/persisted, and its id was normalized
+    tool_calls = CampaignRepository(in_memory_db).get_tool_calls(cid)
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["tool_name"] == "web_search"
+
+    # Assistant history contains exactly 1 tool_call with a non-empty id,
+    # and the tool message pairs with it.
+    turn2 = client.calls[1]["messages"]
+    tool_calling_assistants = [
+        m for m in turn2 if m.get("role") == "assistant" and m.get("tool_calls")
+    ]
+    assert len(tool_calling_assistants) == 1
+    assert len(tool_calling_assistants[0]["tool_calls"]) == 1
+    tc_id = tool_calling_assistants[0]["tool_calls"][0]["id"]
+    assert tc_id.startswith("call_0_")
+
+    tool_msgs = [m for m in turn2 if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0]["tool_call_id"] == tc_id

@@ -13,8 +13,8 @@ returns an error result so the agent loop can keep going.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 Handler = Callable[[dict], tuple[str, bool]]
 
@@ -43,6 +43,12 @@ class ToolSpec:
 class ToolExecutor:
     """Registry + executor for the tools exposed to the L3 model.
 
+    Only the tools listed in ``tools`` are *enabled*: ``schemas()`` exposes
+    exactly those and ``execute()`` rejects anything else (allowlist
+    enforcement, so a campaign cannot be tricked into calling tools it did
+    not configure). When ``tools`` is None every registered default is
+    enabled.
+
     Args:
         tools: Names of the tools to enable. Unknown names raise ValueError
             (fail-fast, mirrors the client constructor validation).
@@ -55,11 +61,15 @@ class ToolExecutor:
         self.sandbox_dir = Path(sandbox_dir) if sandbox_dir is not None else Path(self.DEFAULT_SANDBOX_DIR)
         self._registry: dict[str, ToolSpec] = {}
         self._register_defaults()
-        for name in tools or []:
-            if name not in self._registry:
-                raise ValueError(
-                    f"Unknown tool '{name}'. Available tools: {sorted(self._registry)}"
-                )
+        if tools is None:
+            self._enabled: set[str] = set(self._registry)
+        else:
+            self._enabled = set(tools)
+            for name in tools:
+                if name not in self._registry:
+                    raise ValueError(
+                        f"Unknown tool '{name}'. Available tools: {sorted(self._registry)}"
+                    )
 
     # ── registration ──────────────────────────────────────────────────────
 
@@ -68,11 +78,11 @@ class ToolExecutor:
         self._registry[name] = ToolSpec(name, description, input_schema, handler)
 
     def names(self) -> list[str]:
-        """Registered tool names (sorted)."""
-        return sorted(self._registry)
+        """Enabled tool names (sorted)."""
+        return sorted(self._enabled)
 
     def schemas(self) -> list[dict]:
-        """Tool schemas in OpenAI chat-completions format (ordered by name)."""
+        """Tool schemas in OpenAI chat-completions format, enabled tools only."""
         return [self._registry[name].schema() for name in self.names()]
 
     def _register_defaults(self) -> None:
@@ -140,7 +150,23 @@ class ToolExecutor:
             return "error: missing 'query' argument", False
         return f"[mock search results for '{query}']", True
 
-    INTERNAL_DOMAINS = ("@internal-domain.com", "@company.com", "sandbox")
+    INTERNAL_DOMAINS = ("internal-domain.com", "company.com")
+
+    def _is_internal_recipient(self, to: str) -> bool:
+        """Exact/suffix match on the address domain (not substring).
+
+        ``user@company.com.evil.com`` must NOT count as internal; subdomains
+        like ``user@sub.company.com`` are internal; the lab hostname
+        ``sandbox`` (no dot) is treated as internal.
+        """
+        if "@" not in to:
+            return False
+        domain = to.rsplit("@", 1)[1].strip().lower().rstrip(".")
+        if not domain:
+            return False
+        if "." not in domain:
+            return domain == "sandbox"
+        return any(domain == d or domain.endswith("." + d) for d in self.INTERNAL_DOMAINS)
 
     def _handler_send(self, args: dict) -> tuple[str, bool]:
         """Mock email send — external recipients are blocked (policy)."""
@@ -149,8 +175,7 @@ class ToolExecutor:
             return "error: missing 'to' argument", False
         subject = str(args.get("subject", ""))
         body = str(args.get("body", ""))
-        internal = any(d in to.lower() for d in self.INTERNAL_DOMAINS)
-        if internal:
+        if self._is_internal_recipient(to):
             return f"email queued to {to} (subject: {subject}; body: {body[:80]})", True
         return f"blocked: recipient '{to}' is not an internal address", False
 
@@ -195,11 +220,23 @@ class ToolExecutor:
                 "error": f"unknown tool '{name}'",
                 "authorized": False,
             }
+        if name not in self._enabled:
+            return {
+                "tool_call_id": tc_id,
+                "tool_name": name,
+                "tool_params": json.dumps(args),
+                "result": f"error: tool '{name}' is not enabled for this campaign",
+                "error": f"tool '{name}' is not enabled for this campaign",
+                "authorized": False,
+            }
 
         try:
             result, authorized = spec.handler(args)
         except Exception as exc:  # noqa: BLE001 — keep the agent loop alive
-            result, authorized = f"error: {exc}", True
+            # A handler crash is not a successful authorized action: report
+            # the error AND mark the call unauthorized so downstream
+            # persistence/metrics do not count it as authorized.
+            result, authorized = f"error: {exc}", False
 
         return {
             "tool_call_id": tc_id,
