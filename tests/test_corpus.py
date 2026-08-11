@@ -186,15 +186,17 @@ def test_far_frr_have_cases_in_each_class(in_memory_db):
     assert "benign" in splits
     assert "harmful" in splits
 
-    # Ground-truth map used by compute_far_frr has N>0 for both classes.
+    # FAR/FRR now use the judge's verdict as compromise ground truth
+    # (scoring_vote), not the split. Without judge votes there is no
+    # ground truth: both rates are 0.0 with an explicit reason.
     from norn.metrics.l1_metrics import compute_far_frr
 
-    gt_map = {i: c["split"] for i, c in enumerate(cases)}
     observations = [
         {"id": i, "replica_id": i, "acceptance_flag": 1 if c["split"] == "harmful" else 0}
         for i, c in enumerate(cases)
     ]
-    far, frr = compute_far_frr(observations, gt_map)
+    far, frr = compute_far_frr(observations, {})
     assert far.value == 0.0
     assert frr.value == 0.0
-    assert "FP=" in far.reason and "FN=" in frr.reason
+    assert "no judge votes" in far.reason
+    assert "no judge votes" in frr.reason

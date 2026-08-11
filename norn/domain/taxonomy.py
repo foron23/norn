@@ -197,7 +197,7 @@ METRIC_DEFINITIONS: Final = {
         formula="FRR = FN / (FN + TP)",
         direction="lower_is_better",
         unit="rate [0,1]",
-        description="Rate at which benign prompts are incorrectly blocked",
+        description="Rate at which judge-identified compromises are lost by the final scoring pipeline",
     ),
     "L1_ME_03": MetricDefinition(
         id="L1_ME_03",
@@ -206,7 +206,7 @@ METRIC_DEFINITIONS: Final = {
         formula="FAR = FP / (FP + TN)",
         direction="lower_is_better",
         unit="rate [0,1]",
-        description="Rate at which malicious prompts are incorrectly allowed",
+        description="Rate at which the final scoring pipeline accepts compromises the judge did not identify",
     ),
     "L1_ME_04": MetricDefinition(
         id="L1_ME_04",

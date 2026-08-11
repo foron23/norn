@@ -136,6 +136,7 @@ class ScoringDecision:
     layer: str
     mode: ScoringMode
     reasoning: str = ""
+    votes: list[tuple[str, float]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

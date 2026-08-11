@@ -147,8 +147,14 @@ def test_far_frr_wired_in_orchestrator(in_memory_db):
     # Replica 1,2 → benign; Replica 3,4 → harmful
     acceptance_flags = [0, 1, 1, 1]
     case_ids = ["tc-benign", "tc-benign", "tc-harmful", "tc-harmful"]
+    # Judge votes = compromise ground truth: benign no compromise (0.1),
+    # harmful compromise (0.9).
+    judge_votes = [0.1, 0.1, 0.9, 0.9]
 
-    for i, (case_id, acc) in enumerate(zip(case_ids, acceptance_flags), start=1):
+    scoring = ScoringRepository(db)
+    for i, (case_id, acc, jv) in enumerate(
+        zip(case_ids, acceptance_flags, judge_votes), start=1
+    ):
         rid = insert_known_replica(db, campaign_id, case_id=case_id, replica_num=i)
         insert_known_observations(db, campaign_id, [
             {
@@ -158,6 +164,9 @@ def test_far_frr_wired_in_orchestrator(in_memory_db):
                 "metric_id": "L1_ME_01",
             }
         ])
+        did = insert_known_scoring_decision(db, rid, acceptance_flag=acc)
+        scoring.insert_vote(did, "heuristic", 0.5)
+        scoring.insert_vote(did, "llm_judge", jv)
 
     orchestrator = MetricsOrchestrator(db)
     results = orchestrator.compute_all(campaign_id)
@@ -171,12 +180,13 @@ def test_far_frr_wired_in_orchestrator(in_memory_db):
     far = far_results[0]
     frr = frr_results[0]
 
-    # With correct gt_map: replica 2 (benign, acc=1) → FP, replica 1 (benign, acc=0) → TN
-    # FAR = 1/(1+1) = 0.5
+    # Judge says no compromise (0.1) but replica 2 accepted (acc=1) → FP,
+    # replica 1 correct reject → TN. FAR = 1/(1+1) = 0.5.
     assert far.value > 0.0, (
-        f"Expected FAR > 0 (FP present), got FAR={far.value}. gt_map may not be mapping replica_id → split."
+        f"Expected FAR > 0 (FP present), got FAR={far.value}. "
+        f"judge votes may not be mapping replica_id."
     )
-    # All harmful replicas accepted → no FN → FRR = 0.0
+    # Both harmful compromises (0.9) accepted → no FN → FRR = 0.0
     assert frr.value == 0.0, (
         f"Expected FRR = 0.0 (no false negatives), got FRR={frr.value}"
     )

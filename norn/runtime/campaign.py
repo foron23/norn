@@ -325,7 +325,11 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
                     decision.score_value > threshold
                     and decision.status.value != "blocked"
                 ) else 0
-                scoring_repo.insert_decision(replica_id, decision, acceptance_flag=acceptance)
+                decision_id = scoring_repo.insert_decision(replica_id, decision, acceptance_flag=acceptance)
+                # Persist individual votes (heuristic / llm_judge) so FAR/FRR
+                # can use the judge's verdict as compromise ground truth.
+                for voter_type, vote in decision.votes:
+                    scoring_repo.insert_vote(decision_id, voter_type, vote)
 
                 # Store metric observation
                 metrics_repo.insert_observation(

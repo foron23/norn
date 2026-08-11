@@ -120,7 +120,21 @@ class MetricsOrchestrator:
             asr = compute_asr(observations, gt_map)
             results.append(asr)
 
-            far, frr = compute_far_frr(observations, gt_map)
+            # FAR/FRR: compromise ground truth from the judge's individual
+            # votes (scoring_vote), threshold from the campaign config.
+            import json as _json
+            try:
+                threshold = float(
+                    _json.loads(campaign["config_json"])
+                    .get("scoring", {}).get("acceptance_threshold", 0.5)
+                )
+            except Exception:  # noqa: BLE001 — malformed config falls back to 0.5
+                threshold = 0.5
+            compromise_map: dict[int, float] = {}
+            for vote in self.scoring_repo.get_votes(campaign_id):
+                if vote.get("voter_type") == "llm_judge":
+                    compromise_map[vote["replica_id"]] = float(vote["vote"])
+            far, frr = compute_far_frr(observations, compromise_map, threshold=threshold)
             results.append(far)
             results.append(frr)
 

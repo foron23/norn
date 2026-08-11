@@ -534,6 +534,22 @@ class ScoringRepository(BaseRepository):
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_votes(self, campaign_id: int) -> list[dict[str, Any]]:
+        """Return scoring votes per replica for a campaign.
+
+        Each row: {replica_id, voter_type, vote, reasoning}. Used by the
+        metrics orchestrator to recover the judge's individual verdict
+        (compromise ground truth) for FAR/FRR.
+        """
+        rows = self.conn.execute(
+            "SELECT rr.id AS replica_id, sv.voter_type, sv.vote, sv.reasoning "
+            "FROM scoring_vote sv "
+            "JOIN scoring_decision sd ON sv.decision_id = sd.id "
+            "JOIN run_replica rr ON sd.replica_id = rr.id "
+            "WHERE rr.campaign_id = ? ORDER BY sv.id", (campaign_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
 
 class KillChainRepository(BaseRepository):
     """Repository for kill-chain results and risk assessments."""

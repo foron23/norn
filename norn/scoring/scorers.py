@@ -431,6 +431,7 @@ Return a JSON object with fields: score (0.0 to 1.0), status (blocked/partial/co
                 layer=layer,
                 mode=ScoringMode.LLM_JUDGE,
                 reasoning=f"LLM judge: no provider configured — heuristic fallback ({fallback.reasoning})",
+                votes=[("llm_judge", fallback.score_value)],
             )
 
         if not self._should_sample():
@@ -442,6 +443,7 @@ Return a JSON object with fields: score (0.0 to 1.0), status (blocked/partial/co
                 layer=layer,
                 mode=ScoringMode.LLM_JUDGE,
                 reasoning=f"LLM judge: unsampled replica — heuristic fallback ({fallback.reasoning})",
+                votes=[("llm_judge", fallback.score_value)],
             )
 
         verdict = self._call_judge(prompt, response, technique_id, layer, split=split)
@@ -459,6 +461,7 @@ Return a JSON object with fields: score (0.0 to 1.0), status (blocked/partial/co
                 layer=layer,
                 mode=ScoringMode.LLM_JUDGE,
                 reasoning="LLM judge: invalid or missing verdict, fallback to AMBIGUOUS",
+                votes=[("llm_judge", 0.5)],
             )
 
         return ScoringDecision(
@@ -468,6 +471,7 @@ Return a JSON object with fields: score (0.0 to 1.0), status (blocked/partial/co
             layer=layer,
             mode=ScoringMode.LLM_JUDGE,
             reasoning=f"LLM judge: {verdict.reasoning}",
+            votes=[("llm_judge", verdict.score)],
         )
 
 
@@ -501,6 +505,7 @@ class HybridScorer:
                     layer=layer,
                     mode=ScoringMode.HYBRID,
                     reasoning=f"Veto: H({h_decision.status.value}) L({l_decision.status.value})",
+                    votes=[("heuristic", h_decision.score_value), ("llm_judge", l_decision.score_value)],
                 )
 
         avg_score = (h_decision.score_value + l_decision.score_value) / 2
@@ -519,6 +524,7 @@ class HybridScorer:
             mode=ScoringMode.HYBRID,
             reasoning=f"H({h_decision.status.value}={h_decision.score_value:.2f}) "
                        f"L({l_decision.status.value}={l_decision.score_value:.2f})",
+            votes=[("heuristic", h_decision.score_value), ("llm_judge", l_decision.score_value)],
         )
 
 
