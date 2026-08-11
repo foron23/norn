@@ -6,6 +6,9 @@ jitter, and support for the ``Retry-After`` response header.
 """
 from __future__ import annotations
 
+import datetime
+import email.utils
+import math
 import random
 import time
 
@@ -27,14 +30,33 @@ def backoff_delay(attempt: int, *, jitter_ratio: float = 0.1) -> float:
 
 
 def parse_retry_after(resp: httpx.Response, default: float) -> float:
-    """Respect the ``Retry-After`` header when present, else ``default``."""
+    """Respect the ``Retry-After`` header when present, else ``default``.
+
+    Handles both formats allowed by RFC 9110: delta-seconds (``"3"``) and
+    HTTP-date (``"Wed, 21 Oct 2015 07:28:00 GMT"``). Unparseable headers or
+    dates in the past fall back to ``default``.
+    """
     raw = resp.headers.get("Retry-After")
     if raw is None:
         return default
+    # Format 1: delta-seconds. Only accept finite, non-negative values —
+    # remote input must not reach time.sleep() as NaN/inf (OverflowError).
     try:
-        return max(default, float(raw))
+        seconds = float(raw)
     except ValueError:
+        pass
+    else:
+        if math.isfinite(seconds) and seconds >= 0:
+            return max(default, seconds)
+    # Format 2: HTTP-date.
+    try:
+        retry_at = email.utils.parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
         return default
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=datetime.UTC)
+    delta = (retry_at - datetime.datetime.now(datetime.UTC)).total_seconds()
+    return max(default, delta)
 
 
 def with_retry(request_fn, *, attempts: int = DEFAULT_RETRY_ATTEMPTS) -> httpx.Response:
@@ -45,7 +67,12 @@ def with_retry(request_fn, *, attempts: int = DEFAULT_RETRY_ATTEMPTS) -> httpx.R
     exponential backoff + jitter (respecting ``Retry-After`` when present).
     The last response is returned once attempts are exhausted so callers can
     raise the appropriate domain error.
+
+    Raises:
+        ValueError: If ``attempts`` is less than 1.
     """
+    if attempts < 1:
+        raise ValueError("attempts must be >= 1")
     last_resp: httpx.Response | None = None
     for attempt in range(attempts):
         last_resp = request_fn()
