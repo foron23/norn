@@ -61,12 +61,21 @@ def _campaign_config_from_db(db: Database, campaign_id: int) -> CampaignConfig:
     The runtime must use a single typed source of truth instead of re-parsing
     raw dicts (NOR-04). plan_campaign persists ``config.model_dump_json()``,
     so this round-trips without data loss.
+
+    Raises:
+        ValueError: If the campaign does not exist or its config_json is
+            missing/invalid (e.g. legacy campaigns stored as ``{}``).
     """
     repo = CampaignRepository(db)
     campaign = repo.get_campaign(campaign_id)
     if not campaign:
         raise ValueError(f"Campaign {campaign_id} not found")
-    return CampaignConfig.model_validate(json.loads(campaign["config_json"]))
+    try:
+        return CampaignConfig.model_validate_json(campaign["config_json"])
+    except ValueError as exc:
+        raise ValueError(
+            f"Campaign {campaign_id} has invalid or missing config_json: {exc}"
+        ) from exc
 
 
 def plan_campaign(db: Database, config: CampaignConfig) -> int:
