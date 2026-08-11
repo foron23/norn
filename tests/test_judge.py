@@ -270,3 +270,30 @@ def test_build_scorer_hybrid_with_judge_model_builds_provider(monkeypatch):
     assert built == ["openai"]
     assert scorer.llm_judge._provider is not None
     assert scorer.llm_judge._model_config.model_name == "judge-7b"
+
+
+def test_build_scorer_propagates_judge_api_key(monkeypatch):
+    """judge_api_key must reach the judge's ModelConfig (E2E 401 fix).
+
+    Regression: the judge used to be built without an api_key, so a real
+    OpenAI-backed judge called the API unauthenticated → 401 → every
+    verdict fell back to AMBIGUOUS and hybrid campaigns reported bogus
+    FRR values. The campaign passes the audited model's api_key through.
+    """
+    built = []
+
+    def fake_build_provider(name):
+        built.append(name)
+        return FakeJudgeProvider()
+
+    monkeypatch.setattr("norn.scoring.scorers.build_provider", fake_build_provider)
+    scorer = build_scorer(
+        "hybrid",
+        judge_model="judge-7b",
+        judge_api_key="sk-test-judge-key",
+    )
+
+    assert scorer.llm_judge._model_config.api_key == "sk-test-judge-key"
+    # Without the key the judge config stays None (legacy behavior).
+    scorer_no_key = build_scorer("hybrid", judge_model="judge-7b")
+    assert scorer_no_key.llm_judge._model_config.api_key is None

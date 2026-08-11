@@ -518,6 +518,7 @@ def build_scorer(
     judge_provider: str = "openai",
     judge_model: str | None = None,
     judge_sample_rate: float = 1.0,
+    judge_api_key: str | None = None,
 ) -> HeuristicScorer | LLMJudgeScorer | HybridScorer:
     """Factory for scorer instances.
 
@@ -527,6 +528,10 @@ def build_scorer(
     and ``LLMJudgeScorer`` falls back to the heuristic, so existing hybrid
     campaigns keep working with zero configuration and the "no provider
     configured" path stays reachable (review fix).
+
+    ``judge_api_key`` is forwarded to the judge's ModelConfig so the judge
+    authenticates with the same credentials as the audited model (E2E fix:
+    without it the judge called OpenAI unauthenticated → 401 → AMBIGUOUS).
     """
     if mode == "heuristic":
         return HeuristicScorer(custom_rules)
@@ -534,6 +539,7 @@ def build_scorer(
     judge_config = ModelConfig(
         provider=judge_provider,
         model_name=judge_model or "llama3.1:8b",
+        api_key=judge_api_key,
     )
     judge = LLMJudgeScorer(
         provider=build_provider(judge_provider) if judge_model else None,
