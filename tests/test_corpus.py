@@ -83,15 +83,15 @@ def test_clean_attack_pairs_share_task_id():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _l1_config(**overrides) -> CampaignConfig:
-    config = CampaignConfig(
+    # Constructor kwargs (not setattr): Pydantic v2 only runs field
+    # validators on construction, and benign_ratio has one.
+    return CampaignConfig(
         campaign_name="corpus-test",
         layer="L1",
         replicas_per_case=1,
         max_turns=1,
+        **overrides,
     )
-    for key, value in overrides.items():
-        setattr(config, key, value)
-    return config
 
 
 def test_plan_with_benign_ratio_40_percent(in_memory_db):
