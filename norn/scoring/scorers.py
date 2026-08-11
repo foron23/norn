@@ -411,6 +411,18 @@ Return a JSON object with fields: score (0.0 to 1.0), status (blocked/partial/co
         self, prompt: str, response: str, technique_id: str, layer: str,
         context: list[dict[str, str]] | None = None,
     ) -> ScoringDecision:
+        # No provider configured (legacy): heuristic fallback, mode LLM_JUDGE.
+        if self._provider is None or self._model_config is None:
+            fallback = self._fallback.score_response(prompt, response, technique_id, layer, context)
+            return ScoringDecision(
+                score_value=fallback.score_value,
+                status=fallback.status,
+                technique_id=technique_id,
+                layer=layer,
+                mode=ScoringMode.LLM_JUDGE,
+                reasoning=f"LLM judge: no provider configured — heuristic fallback ({fallback.reasoning})",
+            )
+
         if not self._should_sample():
             fallback = self._fallback.score_response(prompt, response, technique_id, layer, context)
             return ScoringDecision(
@@ -519,14 +531,15 @@ def build_scorer(
         provider=judge_provider,
         model_name=judge_model or "llama3.1:8b",
     )
+    if mode == "heuristic":
+        return HeuristicScorer(custom_rules)
+
     judge = LLMJudgeScorer(
         provider=build_provider(judge_provider),
         model_config=judge_config,
         sample_rate=judge_sample_rate,
     )
-    if mode == "heuristic":
-        return HeuristicScorer(custom_rules)
-    elif mode == "llm_judge":
+    if mode == "llm_judge":
         return judge
     else:  # hybrid (default)
         return HybridScorer(HeuristicScorer(custom_rules), judge, vote_strategy)
