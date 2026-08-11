@@ -101,7 +101,15 @@ class CampaignConfig(pydantic.BaseModel):
     max_turns: int = 10
     max_tool_calls: int = 5
     techniques: list[str] | None = None
+    benign_ratio: float | None = None
     export: ExportConfig = pydantic.Field(default_factory=ExportConfig)
+
+    @pydantic.field_validator("benign_ratio")
+    @classmethod
+    def _validate_benign_ratio(cls, v: float | None) -> float | None:
+        if v is not None and not 0.0 <= v <= 1.0:
+            raise ValueError("benign_ratio must be in [0.0, 1.0]")
+        return v
 
 
 # ── Runtime Dataclasses ──────────────────────────────────────────────────────
