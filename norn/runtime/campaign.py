@@ -319,6 +319,7 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
                 ) else None
                 decision = scorer.score_response(
                     case.payload, response, case.technique_id, layer, context=context,
+                    split=case.split.value if case.split else None,
                 )
                 acceptance = 1 if (
                     decision.score_value > threshold
