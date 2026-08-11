@@ -27,6 +27,7 @@ from norn.persistence.database import (
 )
 from norn.runtime.ollama_client import OllamaConnectionError
 from norn.runtime.providers import build_provider
+from norn.runtime.tool_executor import ToolExecutor
 from norn.scoring.scorers import build_scorer
 
 
@@ -269,6 +270,11 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
     client = build_provider(provider_name)
     console = Console()
 
+    # NOR-01: L3 campaigns with tools configured run the real agent loop.
+    # Without tools (or for L1/L2) the legacy simple loop is used unchanged.
+    use_agent_loop = layer == "L3" and bool(config.tools)
+    executor = ToolExecutor(config.tools) if use_agent_loop else None
+
     # Pre-flight: warn if model is not known to Ollama (Ollama-only check)
     if provider_name == "ollama":
         _validate_ollama_connection(model_config)
@@ -296,56 +302,14 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
             )
 
             try:
-                max_turns = config.max_turns
-                all_tool_calls: list[dict] = []
-
-                for turn in range(max_turns):
-                    result = client.chat(model_config, case.payload)
-                    response, tokens_in, tokens_out, latency_ms = result[:4]
-                    tool_calls = result[4] if len(result) > 4 else None
-                    metadata = result[5] if len(result) > 5 else None
-
-                    if not response or not response.strip():
-                        response = "(no response)"
-
-                    repo.insert_turn_event(
-                        replica_id, turn, case.payload, response,
-                        tokens_in=tokens_in,
-                        tokens_out=tokens_out,
-                        latency_ms=latency_ms,
+                if use_agent_loop:
+                    response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_agent_replica(
+                        client, repo, replica_id, case, model_config, config, executor,
                     )
-
-                    # Store tool call events for L3 campaigns
-                    if tool_calls and layer == "L3":
-                        for tc in tool_calls:
-                            func = tc.get("function", {})
-                            tool_name = func.get("name", tc.get("name", "unknown"))
-                            tool_params = func.get("arguments", tc.get("arguments", "{}"))
-                            repo.insert_tool_call(
-                                replica_id=replica_id,
-                                tool_name=tool_name,
-                                tool_params=tool_params,
-                                tool_result=tc.get("result", ""),
-                                is_authorized=bool(tc.get("is_authorized", 1)),
-                                turn=turn,
-                            )
-                            all_tool_calls.append({
-                                "tool_name": tool_name,
-                                "tool_params": tool_params,
-                                "tool_result": tc.get("result", ""),
-                                "is_authorized": tc.get("is_authorized", 1),
-                                "turn": turn,
-                            })
-
-                    # Store tfm_retrieval metadata for L2 campaigns
-                    if metadata and "tfm_retrieval" in metadata and layer == "L2":
-                        tfm = metadata["tfm_retrieval"]
-                        repo.insert_retrieval_event(
-                            replica_id,
-                            bool(tfm.get("poisoned_retrieval", False)),
-                            tfm.get("top_k", 5),
-                            tfm.get("retrieved", []),
-                        )
+                else:
+                    response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_simple_replica(
+                        client, repo, replica_id, case, model_config, config,
+                    )
 
                 # Score on final turn's response
                 threshold = config.scoring.acceptance_threshold
@@ -425,6 +389,167 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
         failed_replicas=failed,
         metrics=metric_results,
     )
+
+
+def _run_simple_replica(
+    client,
+    repo: CampaignRepository,
+    replica_id: int,
+    case: CaseDescriptor,
+    model_config: ModelConfig,
+    config: CampaignConfig,
+) -> tuple[str, int, int, float, list[dict]]:
+    """Legacy per-turn loop (L1/L2, or L3 without tools configured).
+
+    Exact extraction of the original loop: the same payload is re-sent each
+    turn and tool_calls from the provider are persisted as reported (they are
+    never executed). Used verbatim so behavior is identical when the agent
+    loop is not active (NOR-01 acceptance criterion).
+    """
+    max_turns = config.max_turns
+    all_tool_calls: list[dict] = []
+    response = ""
+    tokens_in = tokens_out = 0
+    latency_ms = 0.0
+
+    for turn in range(max_turns):
+        result = client.chat(model_config, case.payload)
+        response, tokens_in, tokens_out, latency_ms = result[:4]
+        tool_calls = result[4] if len(result) > 4 else None
+        metadata = result[5] if len(result) > 5 else None
+
+        if not response or not response.strip():
+            response = "(no response)"
+
+        repo.insert_turn_event(
+            replica_id, turn, case.payload, response,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            latency_ms=latency_ms,
+        )
+
+        # Store tool call events for L3 campaigns
+        if tool_calls and case.layer == "L3":
+            for tc in tool_calls:
+                func = tc.get("function", {})
+                tool_name = func.get("name", tc.get("name", "unknown"))
+                tool_params = func.get("arguments", tc.get("arguments", "{}"))
+                repo.insert_tool_call(
+                    replica_id=replica_id,
+                    tool_name=tool_name,
+                    tool_params=tool_params,
+                    tool_result=tc.get("result", ""),
+                    is_authorized=bool(tc.get("is_authorized", 1)),
+                    turn=turn,
+                )
+                all_tool_calls.append({
+                    "tool_name": tool_name,
+                    "tool_params": tool_params,
+                    "tool_result": tc.get("result", ""),
+                    "is_authorized": tc.get("is_authorized", 1),
+                    "turn": turn,
+                })
+
+        # Store tfm_retrieval metadata for L2 campaigns
+        if metadata and "tfm_retrieval" in metadata and case.layer == "L2":
+            tfm = metadata["tfm_retrieval"]
+            repo.insert_retrieval_event(
+                replica_id,
+                bool(tfm.get("poisoned_retrieval", False)),
+                tfm.get("top_k", 5),
+                tfm.get("retrieved", []),
+            )
+
+    return response, tokens_in, tokens_out, latency_ms, all_tool_calls
+
+
+def _run_agent_replica(
+    client,
+    repo: CampaignRepository,
+    replica_id: int,
+    case: CaseDescriptor,
+    model_config: ModelConfig,
+    config: CampaignConfig,
+    executor: ToolExecutor,
+) -> tuple[str, int, int, float, list[dict]]:
+    """Run the L3 agent loop for one replica (NOR-01).
+
+    Accumulates the full message history, sends tool schemas, executes every
+    tool call the model makes, injects the results back, and repeats until the
+    model answers without tool calls or ``max_turns`` is exhausted.
+
+    Returns:
+        (final_response, tokens_in, tokens_out, latency_ms, all_tool_calls)
+    """
+    messages: list[dict] = []
+    if model_config.system_prompt:
+        messages.append({"role": "system", "content": model_config.system_prompt})
+    messages.append({"role": "user", "content": case.payload})
+
+    tools = executor.schemas()
+    all_tool_calls: list[dict] = []
+    total_in = total_out = 0
+    total_latency = 0.0
+    final_response = ""
+
+    for turn in range(config.max_turns):
+        result = client.chat_messages(model_config, messages, tools=tools)
+        response, tokens_in, tokens_out, latency_ms, tool_calls, _metadata = result[:6]
+        total_in += int(tokens_in or 0)
+        total_out += int(tokens_out or 0)
+        total_latency += float(latency_ms or 0.0)
+
+        if not response or not response.strip():
+            response = "(no response)"
+
+        repo.insert_turn_event(
+            replica_id, turn, case.payload, response,
+            tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms,
+        )
+
+        assistant_msg: dict = {"role": "assistant", "content": response}
+        # Only the subset we actually execute goes into the history, so every
+        # tool_call has a matching tool message. Normalize ids so pairing
+        # works even if the provider omits them.
+        executed: list[dict] = []
+        if tool_calls:
+            for i, tc in enumerate(list(tool_calls)[: config.max_tool_calls]):
+                if not tc.get("id"):
+                    tc = {**tc, "id": f"call_{turn}_{i}"}
+                executed.append(tc)
+            assistant_msg["tool_calls"] = executed
+        messages.append(assistant_msg)
+
+        final_response = response
+
+        if not executed:
+            break
+
+        # Execute every tool call persisted in the assistant message
+        for tc in executed:
+            exec_result = executor.execute(tc)
+            repo.insert_tool_call(
+                replica_id=replica_id,
+                tool_name=exec_result["tool_name"],
+                tool_params=exec_result["tool_params"],
+                tool_result=exec_result["result"],
+                is_authorized=exec_result["authorized"],
+                turn=turn,
+            )
+            all_tool_calls.append({
+                "tool_name": exec_result["tool_name"],
+                "tool_params": exec_result["tool_params"],
+                "tool_result": exec_result["result"],
+                "is_authorized": exec_result["authorized"],
+                "turn": turn,
+            })
+            messages.append({
+                "role": "tool",
+                "tool_call_id": exec_result["tool_call_id"],
+                "content": exec_result["result"],
+            })
+
+    return final_response, total_in, total_out, total_latency, all_tool_calls
 
 
 def export_campaign(db: Database, campaign_id: int, fmt: str = "all") -> list:
