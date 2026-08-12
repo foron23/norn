@@ -14,6 +14,16 @@ rules:
     score: 0.9
     reasoning: "Unauthorized tool call: send_email to external address"
 
+  # La tool REAL del ToolExecutor (NOR-01) se llama `send`; send_email queda
+  # como alias legacy del lab original del TFM. Ambas comparten la misma
+  # política allowlist de destinatarios.
+  - tool: send
+    arg: to
+    match: not_contains
+    values: ["@internal-domain.com", "@company.com", "sandbox"]
+    score: 0.9
+    reasoning: "Unauthorized tool call: send to external address"
+
   - tool: file_reader
     arg: path
     match: contains
