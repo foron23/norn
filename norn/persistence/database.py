@@ -221,11 +221,19 @@ class CampaignRepository(BaseRepository):
         self.conn.commit()
 
     def insert_turn_event(self, replica_id: int, turn: int, prompt: str, response: str,
-                          tokens_in: int = 0, tokens_out: int = 0, latency_ms: float = 0.0) -> int:
+                          tokens_in: int = 0, tokens_out: int = 0, latency_ms: float = 0.0,
+                          role: str = "user") -> int:
+        """Insert a turn event.
+
+        ``role`` defaults to ``user`` for the audited model's turns; the
+        LLM judge records its calls with ``role='judge'`` (NOR-07) so cost
+        estimation can split model vs judge tokens and conversation exports
+        can filter judge verdicts out.
+        """
         cur = self.conn.execute(
-            "INSERT INTO turn_event (replica_id, turn, prompt, response, tokens_in, tokens_out, latency_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (replica_id, turn, prompt, response, tokens_in, tokens_out, latency_ms),
+            "INSERT INTO turn_event (replica_id, turn, prompt, response, role, tokens_in, tokens_out, latency_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (replica_id, turn, prompt, response, role, tokens_in, tokens_out, latency_ms),
         )
         self.conn.commit()
         return cur.lastrowid
@@ -455,6 +463,52 @@ class ArtifactRepository(BaseRepository):
         )
         self.conn.commit()
         return cur.lastrowid
+
+
+class CostRepository(BaseRepository):
+    """Repository for the model price catalog (NOR-07)."""
+
+    def upsert_model_cost(self, model: str, provider: str, input_per_1k: float,
+                          output_per_1k: float, currency: str = "USD",
+                          source: str | None = None) -> int:
+        """Insert or update a price row for (model, provider)."""
+        cur = self.conn.execute(
+            "INSERT INTO model_cost (model, provider, input_per_1k, output_per_1k, "
+            "currency, source, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(model, provider) DO UPDATE SET "
+            "input_per_1k = excluded.input_per_1k, "
+            "output_per_1k = excluded.output_per_1k, "
+            "currency = excluded.currency, "
+            "source = excluded.source, "
+            "updated_at = excluded.updated_at",
+            (model, provider, input_per_1k, output_per_1k, currency, source, _now()),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def get_model_cost(self, model: str, provider: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT * FROM model_cost WHERE model = ? AND provider = ?",
+            (model, provider),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def get_all_model_costs(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM model_cost ORDER BY provider, model"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_turn_tokens(self, campaign_id: int) -> list[dict[str, Any]]:
+        """Token usage per turn event of a campaign (with role)."""
+        rows = self.conn.execute(
+            "SELECT te.role, te.tokens_in, te.tokens_out "
+            "FROM turn_event te "
+            "JOIN run_replica rr ON te.replica_id = rr.id "
+            "WHERE rr.campaign_id = ?",
+            (campaign_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 class CampaignDataCollector:
