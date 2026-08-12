@@ -263,6 +263,7 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
         judge_model=config.scoring.judge_model,
         judge_sample_rate=config.scoring.judge_sample_rate,
         judge_api_key=model_config.api_key,
+        rules_file=config.scoring.rules_file,
     )
     test_cases = repo.get_test_cases(campaign_id)
     total_expected = len(test_cases) * replicas_per_case
