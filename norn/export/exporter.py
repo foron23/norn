@@ -46,6 +46,25 @@ class CsvExporter:
             else:
                 f.write("No test cases\n")
 
+        # NOR-07: sidecar cost file (campaign-level data doesn't fit case rows)
+        cost = data.get("cost")
+        if cost:
+            cost_path = os.path.join(output_dir, f"campaign_{campaign_id}_cost.csv")
+            with open(cost_path, "w", newline="") as f:
+                fieldnames = ["model", "provider", "role", "tokens_in", "tokens_out",
+                              "cost", "price_status", "currency", "source"]
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                for line in cost.get("lines", []):
+                    writer.writerow(line)
+                writer.writerow({
+                    "model": "TOTAL", "provider": "", "role": "",
+                    "tokens_in": "", "tokens_out": "",
+                    "cost": cost.get("total_cost"),
+                    "price_status": "", "currency": cost.get("currency", "USD"),
+                    "source": "",
+                })
+
         size = os.path.getsize(path)
         return ExportResult(path=path, format="csv", size_bytes=size)
 

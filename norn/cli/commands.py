@@ -4,6 +4,7 @@ Based on section 3.4 of the TFM — Framework CLI y ejecución de campañas.
 """
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 from typing import Annotated
@@ -17,7 +18,16 @@ from rich.panel import Panel
 
 from norn.domain.models import CampaignConfig, CampaignState
 from norn.domain.taxonomy import LAYER_CATALOG, ATTACK_TECHNIQUES, METRIC_DEFINITIONS
-from norn.persistence.database import CampaignRepository, Database, init_schema, seed_catalog
+from norn.metrics.cost import estimate_campaign_cost
+from norn.persistence.database import (
+    CampaignRepository,
+    CostRepository,
+    Database,
+    current_version,
+    init_schema,
+    migrate,
+    seed_catalog,
+)
 from norn.runtime.campaign import plan_campaign as _plan_campaign
 from norn.runtime.campaign import run_campaign as _run_campaign
 from norn.runtime.campaign import export_campaign as _export_campaign
@@ -66,6 +76,20 @@ def init_db(
     seed_catalog(db)
     console.print(f"[green]Database initialized at {db_path}[/green]")
     console.print(f"[dim]Layers: {len(LAYER_CATALOG)}, Techniques: {len(ATTACK_TECHNIQUES)}, Metrics: {len(METRIC_DEFINITIONS)}[/dim]")
+
+
+@app.command()
+def db_migrate(
+    db_path: Annotated[str, typer.Option("--db", help="SQLite database path")] = "norn.db",
+):
+    """Apply pending schema migrations (idempotent)."""
+    db = Database(db_path)
+    before = current_version(db)
+    after = migrate(db)
+    if after > before:
+        console.print(f"[green]Schema migrated {before} → {after}[/green]")
+    else:
+        console.print(f"[dim]Schema already at version {after} — nothing to apply[/dim]")
 
 
 @app.command()
@@ -191,6 +215,18 @@ def run_campaign(
             badge = "[green]PASS[/green]" if m.pass_fail else "[red]FAIL[/red]"
             mtable.add_row(m.layer, m.name, f"{m.value:.4f}", badge)
         console.print(mtable)
+
+    # NOR-07: estimated cost (explicit estimate disclaimer)
+    try:
+        cost = estimate_campaign_cost(db, campaign_id)
+        total_txt = "-" if cost.total_cost is None else f"${cost.total_cost:.6f}"
+        console.print(
+            f"\n[bold]Coste estimado[/bold] [dim](aprox., según precios configurados "
+            f"en model_cost)[/dim]: [cyan]{total_txt}[/cyan] — "
+            f"detalle: [dim]norn cost --campaign {campaign_id}[/dim]"
+        )
+    except Exception:  # noqa: BLE001, S110 — cost is optional; never fail the run summary
+        pass
 
 
 @app.command()
@@ -343,6 +379,97 @@ def export_campaign(
         table.add_row(r.format, r.path, str(r.size_bytes))
     console.print(table)
     console.print(f"[green]{len(results)} file(s) exported[/green]")
+
+
+# ── Cost estimation (NOR-07) ────────────────────────────────────────────────
+
+cost_app = typer.Typer(help="Cost estimation commands (NOR-07)")
+
+
+@cost_app.callback(invoke_without_command=True)
+def _cost_callback(
+    ctx: typer.Context,
+    campaign: Annotated[int | None, typer.Option("--campaign", "-c", help="Campaign ID to summarize")] = None,
+    db_path: Annotated[str, typer.Option("--db", help="Database path")] = "norn.db",
+):
+    """Show the estimated cost of a campaign (default action of `norn cost`)."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if campaign is None:
+        console.print("[yellow]Usage:[/yellow] norn cost --campaign N | norn cost set ... | norn cost import --csv prices.csv")
+        raise typer.Exit(code=1)
+    db = Database(db_path)
+    migrate(db)
+    try:
+        cost = estimate_campaign_cost(db, campaign)
+    except Exception as e:
+        console.print(f"[red]Cannot estimate cost:[/red] {e}")
+        raise typer.Exit(code=1)
+    table = Table("Model", "Role", "Tokens in", "Tokens out", "Cost", "Status")
+    status_badge = {
+        "ok": "[green]ok[/green]",
+        "free": "[cyan]free[/cyan]",
+        "n/a": "[yellow]n/a[/yellow]",
+    }
+    for line in cost.lines:
+        cost_txt = "-" if line.cost is None else f"${line.cost:.6f}"
+        table.add_row(
+            line.model, line.role, str(line.tokens_in), str(line.tokens_out),
+            cost_txt, status_badge.get(line.price_status, line.price_status),
+        )
+    console.print(table)
+    total_txt = "-" if cost.total_cost is None else f"${cost.total_cost:.6f}"
+    console.print(f"\n[bold]Total estimado:[/bold] [cyan]{total_txt}[/cyan] [dim]({cost.currency})[/dim]")
+    console.print(f"[dim]{cost.note}[/dim]")
+
+
+@cost_app.command("set")
+def cost_set(
+    model: Annotated[str, typer.Option("--model", help="Model name")],
+    provider: Annotated[str, typer.Option("--provider", help="Provider name (e.g. openai)")],
+    input_price: Annotated[float, typer.Option("--input", help="USD per 1k input tokens")],
+    output_price: Annotated[float, typer.Option("--output", help="USD per 1k output tokens")],
+    currency: Annotated[str, typer.Option("--currency", help="Currency")] = "USD",
+    source: Annotated[str | None, typer.Option("--source", help="Price source URL")] = None,
+    db_path: Annotated[str, typer.Option("--db", help="Database path")] = "norn.db",
+):
+    """Set or update the price of a model (prices are user-managed)."""
+    db = Database(db_path)
+    migrate(db)
+    CostRepository(db).upsert_model_cost(
+        model, provider, input_price, output_price, currency, source,
+    )
+    console.print(
+        f"[green]Price set:[/green] {model} ({provider}) — "
+        f"in ${input_price}/1k, out ${output_price}/1k ({currency})"
+    )
+
+
+@cost_app.command("import")
+def cost_import(
+    csv_path: Annotated[Path, typer.Option("--csv", help="CSV: model,provider,input_per_1k,output_per_1k[,currency,source]")],
+    db_path: Annotated[str, typer.Option("--db", help="Database path")] = "norn.db",
+):
+    """Bulk import model prices from a CSV file."""
+    db = Database(db_path)
+    migrate(db)
+    repo = CostRepository(db)
+    count = 0
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            repo.upsert_model_cost(
+                row["model"].strip(),
+                row["provider"].strip(),
+                float(row["input_per_1k"]),
+                float(row["output_per_1k"]),
+                (row.get("currency") or "USD").strip(),
+                (row.get("source") or "").strip() or None,
+            )
+            count += 1
+    console.print(f"[green]{count} price row(s) imported from {csv_path}[/green]")
+
+
+app.add_typer(cost_app, name="cost")
 
 
 # ── Taxonomy ─────────────────────────────────────────────────────────────────

@@ -47,7 +47,7 @@ where = ["."]
 include = ["norn*"]
 
 [tool.setuptools.package-data]
-norn = ["corpus/**/*.json", "reports/templates/*.jinja2"]
+norn = ["corpus/**/*.json", "reports/templates/*.jinja2", "persistence/migrations/*.sql", "scoring/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

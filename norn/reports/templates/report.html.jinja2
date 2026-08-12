@@ -171,6 +171,35 @@
 </div>
 {% endif %}
 
+<!-- Cost Estimation (NOR-07) -->
+{% set cost = data.cost or {} %}
+{% if cost %}
+<div class="section">
+    <h3>Cost Estimation</h3>
+    <p style="color: #8b949e;">{{ cost.get('note', '') }}</p>
+    <table>
+        <tr><th>Model</th><th>Role</th><th>Tokens in</th><th>Tokens out</th><th>Cost</th><th>Status</th><th>Source</th></tr>
+        {% for line in cost.get('lines', []) %}
+        <tr>
+            <td>{{ line.model }}</td>
+            <td>{{ line.role }}</td>
+            <td>{{ line.tokens_in }}</td>
+            <td>{{ line.tokens_out }}</td>
+            <td>{{ ("$%.6f"|format(line.cost)) if line.cost is not none else '-' }}</td>
+            <td>{{ line.price_status }}</td>
+            <td>{{ line.source or '-' }}</td>
+        </tr>
+        {% endfor %}
+        <tr>
+            <td colspan="4"><strong>Total estimado</strong></td>
+            <td><strong>{{ ("$%.6f"|format(cost.total_cost)) if cost.total_cost is not none else '-' }}</strong></td>
+            <td>{{ cost.get('currency', 'USD') }}</td>
+            <td></td>
+        </tr>
+    </table>
+</div>
+{% endif %}
+
 <script>
     // Chart.js metrics visualization
     {% if metrics_aggr %}

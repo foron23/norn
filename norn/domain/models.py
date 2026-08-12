@@ -81,6 +81,7 @@ class ModelConfig(pydantic.BaseModel):
 class ScoringConfig(pydantic.BaseModel):
     mode: ScoringMode = ScoringMode.HYBRID
     heuristic_rules: dict[str, list[str]] = pydantic.Field(default_factory=dict)
+    rules_file: str | None = None
     judge_provider: str = "openai"
     judge_model: str | None = None
     judge_sample_rate: float = 1.0

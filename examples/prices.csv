@@ -1,0 +1,8 @@
+model,provider,input_per_1k,output_per_1k,currency,source
+gpt-4.1-mini,openai,0.0004,0.0016,USD,https://openai.com/api/pricing/
+gpt-4o,openai,0.0025,0.0100,USD,https://openai.com/api/pricing/
+deepseek-chat,deepseek,0.00027,0.0011,USD,https://api-docs.deepseek.com/quick_start/pricing
+gemini-3-flash,google,0.00030,0.00250,USD,https://ai.google.dev/gemini-api/docs/pricing
+minimax-text-01,minimax,0.00015,0.00110,USD,https://platform.minimaxi.com/document/Price
+llama-3.3-nemotron-super-49b-v1,nvidia,0.00020,0.00060,USD,https://build.nvidia.com/
+qwen3-coder-480b-a35b-instruct,qwen,0.00030,0.00070,USD,https://qwen.readthedocs.io/en/latest/cloud/

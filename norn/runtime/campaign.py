@@ -17,6 +17,7 @@ from norn.domain.models import (
     RunSummary,
 )
 from norn.export.exporter import ExportFactory
+from norn.metrics.cost import estimate_campaign_cost
 from norn.metrics.orchestrator import MetricsOrchestrator
 from norn.persistence.database import (
     CampaignDataCollector,
@@ -256,6 +257,14 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
 
     repo.update_state(campaign_id, CampaignState.RUNNING)
 
+    def _record_judge_call(replica_id, prompt, response, tokens_in, tokens_out, latency_ms):
+        """NOR-07: persist judge LLM calls as turn_event rows (role='judge')."""
+        repo.insert_turn_event(
+            replica_id=replica_id, turn=-1, prompt=prompt, response=response,
+            tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms,
+            role="judge",
+        )
+
     scorer = build_scorer(
         scoring_mode,
         vote_strategy,
@@ -263,6 +272,8 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
         judge_model=config.scoring.judge_model,
         judge_sample_rate=config.scoring.judge_sample_rate,
         judge_api_key=model_config.api_key,
+        rules_file=config.scoring.rules_file,
+        judge_recorder=_record_judge_call,
     )
     test_cases = repo.get_test_cases(campaign_id)
     total_expected = len(test_cases) * replicas_per_case
@@ -320,6 +331,7 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
                 decision = scorer.score_response(
                     case.payload, response, case.technique_id, layer, context=context,
                     split=case.split.value if case.split else None,
+                    replica_id=replica_id,
                 )
                 acceptance = 1 if (
                     decision.score_value > threshold
@@ -566,6 +578,10 @@ def export_campaign(db: Database, campaign_id: int, fmt: str = "all") -> list:
         raise ValueError(f"Campaign {campaign_id} not found")
 
     data = collector.collect(campaign_id)
+    try:
+        data["cost"] = estimate_campaign_cost(db, campaign_id).to_dict()
+    except Exception:  # noqa: BLE001, S110 — cost is best-effort; never break an export
+        pass
     try:
         config = _campaign_config_from_db(db, campaign_id)
     except ValueError:
