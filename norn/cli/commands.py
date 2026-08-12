@@ -17,7 +17,14 @@ from rich.panel import Panel
 
 from norn.domain.models import CampaignConfig, CampaignState
 from norn.domain.taxonomy import LAYER_CATALOG, ATTACK_TECHNIQUES, METRIC_DEFINITIONS
-from norn.persistence.database import CampaignRepository, Database, init_schema, seed_catalog
+from norn.persistence.database import (
+    CampaignRepository,
+    Database,
+    current_version,
+    init_schema,
+    migrate,
+    seed_catalog,
+)
 from norn.runtime.campaign import plan_campaign as _plan_campaign
 from norn.runtime.campaign import run_campaign as _run_campaign
 from norn.runtime.campaign import export_campaign as _export_campaign
@@ -66,6 +73,20 @@ def init_db(
     seed_catalog(db)
     console.print(f"[green]Database initialized at {db_path}[/green]")
     console.print(f"[dim]Layers: {len(LAYER_CATALOG)}, Techniques: {len(ATTACK_TECHNIQUES)}, Metrics: {len(METRIC_DEFINITIONS)}[/dim]")
+
+
+@app.command()
+def db_migrate(
+    db_path: Annotated[str, typer.Option("--db", help="SQLite database path")] = "norn.db",
+):
+    """Apply pending schema migrations (idempotent)."""
+    db = Database(db_path)
+    before = current_version(db)
+    after = migrate(db)
+    if after > before:
+        console.print(f"[green]Schema migrated {before} → {after}[/green]")
+    else:
+        console.print(f"[dim]Schema already at version {after} — nothing to apply[/dim]")
 
 
 @app.command()
