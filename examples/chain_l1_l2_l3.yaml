@@ -1,0 +1,16 @@
+# Norn Chain Configuration — multi-layer kill chain L1→L2→L3 (NOR-09)
+# Each link points to a campaign YAML. Link success = ASR/UAR > 0
+# (at least one compromised replica in that layer). stop_on_failure is
+# per link: the chain stops after a failing link only when its flag is set.
+#
+# To run: norn run-chain --config chain_l1_l2_l3.yaml
+
+target: "llama3.1:8b — full kill chain audit"
+
+links:
+  - config: "campaign_l1_baseline.yaml"
+    stop_on_failure: true    # if L1 cannot be compromised, stop here
+  - config: "campaign_l2_rag.yaml"
+    stop_on_failure: false   # keep going even if L2 fails
+  - config: "campaign_l3_agent.yaml"
+    stop_on_failure: false

@@ -100,6 +100,31 @@ class ExportConfig(pydantic.BaseModel):
     formats: list[str] = pydantic.Field(default_factory=lambda: ["html", "json", "csv"])
 
 
+class ChainLinkConfig(pydantic.BaseModel):
+    """One link (layer) of a multi-layer kill chain (NOR-09).
+
+    ``config`` is the path to the campaign YAML that defines that layer's
+    battery. ``stop_on_failure`` is per-link (D6): the chain stops after
+    this link if its layer failed (no compromised replica), while later
+    links keep running when it is False.
+    """
+
+    config: str
+    stop_on_failure: bool = False
+
+
+class ChainConfig(pydantic.BaseModel):
+    """Multi-layer kill chain: ordered links L1 → L2 → L3 (NOR-09).
+
+    Execution is per campaign (simple runner, D5) but link success is
+    computed per test case via ``task_id`` when the corpus provides it,
+    falling back to campaign-level success (any compromise) otherwise.
+    """
+
+    target: str
+    links: list[ChainLinkConfig] = pydantic.Field(min_length=1)
+
+
 class ArmConfig(pydantic.BaseModel):
     """A/B hardening variant (NOR-08): system prompt and/or model overrides.
 

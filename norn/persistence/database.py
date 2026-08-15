@@ -471,6 +471,15 @@ class KillChainRepository(BaseRepository):
         self.conn.commit()
         return cur.lastrowid
 
+    def upsert_kill_chain(self, campaign_id: int, case_id: str,
+                          l1_success: int, l2_success: int, l3_success: int, kccr: float) -> None:
+        """Insert or replace a kill-chain row (NOR-09 chains rewrite per case)."""
+        self.conn.execute(
+            "DELETE FROM kill_chain_result WHERE campaign_id = ? AND case_id = ?",
+            (campaign_id, case_id),
+        )
+        self.insert_kill_chain(campaign_id, case_id, l1_success, l2_success, l3_success, kccr)
+
     def get_kill_chains(self, campaign_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT * FROM kill_chain_result WHERE campaign_id = ?", (campaign_id,)
