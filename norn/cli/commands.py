@@ -23,7 +23,7 @@ from rich.progress import (
 from rich.table import Table
 
 from norn.domain.models import CampaignConfig, CampaignState
-from norn.domain.taxonomy import ATTACK_TECHNIQUES, LAYER_CATALOG, METRIC_DEFINITIONS
+from norn.domain.taxonomy import ATTACK_TECHNIQUES, LAYER_CATALOG, METRIC_DEFINITIONS, pit_aliases
 from norn.metrics.cost import estimate_campaign_cost
 from norn.metrics.kccr import compute_chain_kccr
 from norn.persistence.database import (
@@ -536,6 +536,7 @@ app.add_typer(cost_app, name="cost")
 @app.command()
 def show_taxonomy(
     layer: Annotated[str, typer.Option("--layer", "-l", help="Filter by layer: L1, L2, L3")] = "",
+    show_pit: Annotated[bool, typer.Option("--show-pit", help="Show PIT aliases (NOR-18, Arcanum taxonomy)")] = False,
 ):
     """Show the attack taxonomy and metric definitions."""
     if layer:
@@ -551,9 +552,15 @@ def show_taxonomy(
         console.print(Panel(f"[bold]{layer_key}: {info['name']}[/bold]\n{info['description']}", title="Layer"))
 
         techniques = [t for t in ATTACK_TECHNIQUES.values() if t.layer == layer_key]
-        ttable = Table("ID", "Name", "OWASP", "MITRE ATLAS")
-        for t in techniques:
-            ttable.add_row(t.id, t.name, ", ".join(t.owasp[:2]), ", ".join(t.mitre_atlas[:2]))
+        if show_pit:
+            ttable = Table("ID", "Name", "OWASP", "MITRE ATLAS", "PIT aliases")
+            for t in techniques:
+                aliases = ", ".join(pit_aliases(t.id)) or "—"
+                ttable.add_row(t.id, t.name, ", ".join(t.owasp[:2]), ", ".join(t.mitre_atlas[:2]), aliases)
+        else:
+            ttable = Table("ID", "Name", "OWASP", "MITRE ATLAS")
+            for t in techniques:
+                ttable.add_row(t.id, t.name, ", ".join(t.owasp[:2]), ", ".join(t.mitre_atlas[:2]))
         console.print(ttable)
         console.print()
 

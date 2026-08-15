@@ -1,0 +1,134 @@
+{
+  "_meta": {
+    "source": "Arcanum Prompt Injection Taxonomy (arc_pi_taxonomy)",
+    "license": "CC BY 4.0",
+    "attribution": "Based on the Arcanum Prompt Injection Taxonomy by Jason Haddix, Arcanum Information Security (CC BY 4.0)",
+    "generated_by": "scripts/import_pit.py (NOR-18)"
+  },
+  "map": {
+    "L1_AT_01": [
+      "PIT-T-60",
+      "PIT-T-22"
+    ],
+    "L1_AT_02": [
+      "PIT-T-08",
+      "PIT-T-11",
+      "PIT-T-17"
+    ],
+    "L1_AT_03": [
+      "PIT-T-49",
+      "PIT-T-48",
+      "PIT-T-24"
+    ],
+    "L1_AT_04": [
+      "PIT-T-03",
+      "PIT-E-07",
+      "PIT-E-01",
+      "PIT-E-30"
+    ],
+    "L1_AT_05": [
+      "PIT-T-29",
+      "PIT-T-33",
+      "PIT-T-69"
+    ],
+    "L1_AT_06": [
+      "PIT-T-14",
+      "PIT-T-58",
+      "PIT-T-34"
+    ],
+    "L1_AT_07": [
+      "PIT-T-14",
+      "PIT-T-58"
+    ],
+    "L1_AT_08": [
+      "PIT-T-39",
+      "PIT-T-40",
+      "PIT-T-41"
+    ],
+    "L1_AT_09": [
+      "PIT-T-02",
+      "PIT-T-35",
+      "PIT-T-50"
+    ],
+    "L1_AT_10": [
+      "PIT-T-10",
+      "PIT-T-20",
+      "PIT-T-37"
+    ],
+    "L1_AT_11": [
+      "PIT-T-15",
+      "PIT-T-11",
+      "PIT-T-02"
+    ],
+    "L1_AT_12": [
+      "PIT-T-49",
+      "PIT-T-18"
+    ],
+    "L1_AT_13": [
+      "PIT-T-63",
+      "PIT-T-51"
+    ],
+    "L1_AT_14": [
+      "PIT-T-07",
+      "PIT-T-48",
+      "PIT-T-12"
+    ],
+    "L1_AT_15": [
+      "PIT-T-48",
+      "PIT-T-03"
+    ],
+    "L1_AT_16": [
+      "PIT-T-54",
+      "PIT-E-20",
+      "PIT-E-19",
+      "PIT-E-29",
+      "PIT-E-51"
+    ],
+    "L1_AT_17": [
+      "PIT-T-16",
+      "PIT-T-33"
+    ],
+    "L1_AT_18": [
+      "PIT-T-55",
+      "PIT-T-04"
+    ],
+    "L1_AT_19": [
+      "PIT-T-27",
+      "PIT-T-21"
+    ],
+    "L1_AT_20": [
+      "PIT-T-40",
+      "PIT-T-39",
+      "PIT-T-36"
+    ],
+    "L2_AT_01": [
+      "PIT-T-45",
+      "PIT-T-32",
+      "PIT-T-12"
+    ],
+    "L2_AT_02": [
+      "PIT-T-64"
+    ],
+    "L2_AT_03": [
+      "PIT-T-64",
+      "PIT-T-67"
+    ],
+    "L3_AT_01": [
+      "PIT-T-42",
+      "PIT-T-65",
+      "PIT-T-70"
+    ],
+    "L3_AT_02": [
+      "PIT-T-42",
+      "PIT-T-43",
+      "PIT-T-45",
+      "PIT-T-47",
+      "PIT-T-70"
+    ],
+    "L3_AT_03": [
+      "PIT-T-43",
+      "PIT-T-69",
+      "PIT-T-33"
+    ]
+  }
+}
