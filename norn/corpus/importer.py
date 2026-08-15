@@ -37,6 +37,9 @@ GARAK_TECHNIQUE_MAP: list[tuple[str, str]] = [
     (r"encoding|obfuscat", "L1_AT_04"),
     (r"leakreplay", "L1_AT_06"),
     (r"malwaregen|malware|harmful", "L1_AT_10"),
+    (r"donotanswer", "L1_AT_10"),   # real garak data: DoNotAnswer intents
+    (r"slur", "L1_AT_08"),          # real garak data: slurprompts payloads
+    (r"pii|propile", "L1_AT_07"),   # real garak data: PII extraction payloads
 ]
 
 GARAK_DEFAULT_TECHNIQUE = "L1_AT_09"  # Safety Boundary Probing (catch-all)
@@ -48,6 +51,7 @@ PYRIT_TECHNIQUE_MAP: list[tuple[str, str]] = [
     (r"jailbreak|dan|red.?team", "L1_AT_02"),
     (r"obfuscat|encoding|rot|base64", "L1_AT_04"),
     (r"leak|exfiltrat|extract", "L1_AT_06"),
+    (r"many_shot|few_shot", "L1_AT_02"),   # real PyRIT dataset: many-shot jailbreak
 ]
 
 PYRIT_DEFAULT_TECHNIQUE = "L1_AT_09"
@@ -69,10 +73,13 @@ def _match_technique(name: str, mapping: list[tuple[str, str]], default: str) ->
 def _read_garak_file(path: Path) -> list[dict[str, Any]]:
     """Parse a garak JSONL file into raw probe items.
 
-    Tolerates the two common shapes:
+    Tolerates the shapes found in the real garak repo:
       - ``{"probe": "...", "prompts": [...]}`` (probe dump)
       - ``{"probe_name": "...", "payload": "..."}`` (event log line)
-    Every parsed line yields one item with a ``payload`` string.
+      - ``{"prompt": "...", "intents": [...]}`` (DoNotAnswer data files)
+      - ``{"term": "...", "prefix": "..."}`` (slurprompts payloads)
+    When the line has no probe name, the file stem is used as the hint so
+    the technique bridge can still match (e.g. ``donotanswer/*.jsonl``).
     """
     items: list[dict[str, Any]] = []
     with open(path, encoding="utf-8") as f:
@@ -96,20 +103,27 @@ def _read_garak_file(path: Path) -> list[dict[str, Any]]:
                         items.append({"probe": probe_name, "payload": p})
             elif obj.get("payload"):
                 items.append({"probe": probe_name, "payload": str(obj["payload"])})
+            elif obj.get("prefix") and obj.get("term"):
+                # slurprompts: prefix is the actual slurred prompt template
+                items.append({"probe": probe_name, "payload": str(obj["prefix"])})
     return items
 
 
 def _read_pyrit_file(path: Path) -> list[dict[str, Any]]:
     """Parse a PyRIT seed dataset (JSON) into raw items.
 
-    Accepts ``SeedPromptDataset``-style ``{"prompts": [{"value": ...}]}``
-    as well as a bare list of ``{"value": ...}`` objects. The dataset name
-    (file stem) is used as the technique hint.
+    Accepts the real PyRIT shapes:
+      - ``SeedPromptDataset``-style ``{"prompts": [{"value": ...}]}``
+      - bare list of ``{"value": ...}`` objects
+      - many-shot examples: ``[{"user": ..., "assistant": ..., "category": ...}]``
+        (the attack prompt is the ``user`` field)
+    The technique hint is the dataset path (parent dir + file stem), so
+    e.g. ``jailbreak/many_shot_examples.json`` maps to L1_AT_02.
     """
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     items: list[dict[str, Any]] = []
-    dataset_name = path.stem
+    dataset_name = f"{path.parent.stem}.{path.stem}"
 
     prompts: Any = []
     if isinstance(data, dict):
@@ -122,8 +136,12 @@ def _read_pyrit_file(path: Path) -> list[dict[str, Any]]:
     for p in prompts:
         if isinstance(p, str):
             items.append({"probe": dataset_name, "payload": p})
-        elif isinstance(p, dict) and p.get("value"):
-            items.append({"probe": dataset_name, "payload": str(p["value"])})
+        elif isinstance(p, dict):
+            if p.get("value"):
+                items.append({"probe": dataset_name, "payload": str(p["value"])})
+            elif p.get("user"):
+                # many-shot examples: user is the attack prompt
+                items.append({"probe": dataset_name, "payload": str(p["user"])})
     return items
 
 
@@ -170,17 +188,31 @@ def _import_dir(
 
     probes: list[dict[str, Any]] = []
     idx = 0
-    files = sorted(root.glob("*.jsonl")) + sorted(root.glob("*.json"))
-    for path in files:
+    # Descend recursively so framework data dirs (garak/data/donotanswer/)
+    # keep their subdirectory as a technique hint.
+    files = sorted(root.rglob("*.jsonl")) + sorted(root.rglob("*.json"))
+    seen = set()
+    unique_files = []
+    for p in files:
+        if p not in seen:
+            seen.add(p)
+            unique_files.append(p)
+    for path in unique_files:
         for item in reader(path):
-            technique_id = _match_technique(item["probe"], mapping, default_technique)
-            task_id = f"{source}:{item['probe'] or path.stem}:{idx}"
+            # Prefer the file's own probe name; else use the path relative
+            # to the import root (keeps subdir hints like donotanswer/).
+            hint = item["probe"]
+            if not hint:
+                rel = path.relative_to(root)
+                hint = str(rel.with_suffix("")).replace("/", ".")
+            technique_id = _match_technique(hint, mapping, default_technique)
+            task_id = f"{source}:{hint}:{idx}"
             probes.append({
                 "id": task_id,
                 "technique_id": technique_id,
-                "name": f"{source} probe: {item['probe'] or path.stem}",
+                "name": f"{source} probe: {hint}",
                 "variants": [{
-                    "variant_type": item["probe"] or path.stem,
+                    "variant_type": hint,
                     "split": "harmful",
                     "content": item["payload"],
                     "task_id": task_id,

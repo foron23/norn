@@ -200,6 +200,32 @@ def test_ttc_no_compromise():
     assert result_empty.pass_fail is True
 
 
+def test_ttc_ignores_judge_sentinel_turn():
+    """NOR-07: judge calls persist as turn_event with turn=-1 (role='judge').
+
+    Those are NOT conversation turns — they must not be counted as the
+    first compromise turn, otherwise TTC is -1.0 despite compromises
+    (bug destapado por el E2E real Sprint 4).
+    """
+    turn_events = [
+        # judge sentinel rows (NOR-07) for the compromised replicas
+        {"turn": -1, "prompt": "judge prompt", "response": '{"score": 0.9}', "replica_id": 1, "role": "judge"},
+        {"turn": -1, "prompt": "judge prompt", "response": '{"score": 0.8}', "replica_id": 2, "role": "judge"},
+        # real conversation turns
+        {"turn": 1, "prompt": "test", "response": "I cannot assist.", "replica_id": 1},
+        {"turn": 2, "prompt": "test", "response": "I will help.", "replica_id": 1},
+        {"turn": 3, "prompt": "test", "response": "Here you go.", "replica_id": 2},
+    ]
+    scoring_decisions = [
+        {"replica_id": 1, "acceptance_flag": 1},
+        {"replica_id": 2, "acceptance_flag": 1},
+    ]
+    result = compute_ttc(turn_events, scoring_decisions)
+    assert result.name == "TTC"
+    # replica 1 first real turn = 1, replica 2 first real turn = 3 → avg 2.0
+    assert result.value == 2.0
+
+
 # ── L2 Tests ──────────────────────────────────────────────────────────────────
 
 def test_asr_l2():

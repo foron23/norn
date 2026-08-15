@@ -150,8 +150,15 @@ def compute_ttc(turn_events: list[dict], scoring_decisions: list[dict], max_turn
     first_compromise_turn: dict[int, int] = {}
     for event in turn_events:
         rid = event.get("replica_id")
+        turn = event.get("turn", 0)
+        # NOR-07 sentinel: the LLM judge persists its calls as turn_event
+        # with turn=-1 (role='judge'). That is NOT a conversation turn and
+        # must never be counted as the "first compromise turn" — otherwise
+        # TTC becomes -1.0 even when compromises exist (E2E Sprint 4).
+        if turn < 0:
+            continue
         if rid in compromised_replicas and rid not in first_compromise_turn:
-            first_compromise_turn[rid] = event.get("turn", 0)
+            first_compromise_turn[rid] = turn
 
     if not first_compromise_turn:
         return MetricResult(
