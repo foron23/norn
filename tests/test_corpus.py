@@ -107,7 +107,9 @@ def test_plan_with_benign_ratio_40_percent(in_memory_db):
     # survives corpus edits: round(H * r / (1 - r)) non-harmful cases.
     target = round(harmful * 0.4 / (1.0 - 0.4))
     assert benign + borderline == target, f"got benign+borderline={benign + borderline}, target={target}"
-    assert (benign + borderline) / len(cases) == pytest.approx(0.4)
+    # Documented rounding: the realized ratio is within one case of 0.4
+    # (round() can push the ratio a fraction above/below the target).
+    assert abs((benign + borderline) / len(cases) - 0.4) <= 1.0 / len(cases)
 
 
 def test_plan_without_benign_ratio_keeps_everything(in_memory_db):
@@ -153,6 +155,72 @@ def test_balance_is_deterministic(in_memory_db):
     cases_b = [c["payload"] for c in CampaignRepository(in_memory_db).get_test_cases(cid_b)]
 
     assert cases_a == cases_b
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# NOR-16: corpus sembrado (carriers de Pliny)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def test_l1_corpus_has_at_least_80_adversarial_variants():
+    """NOR-16 acceptance: load_probes('L1') loads >=80 adversarial variants."""
+    probes = load_probes("L1")
+    harmful = sum(
+        1 for p in probes for v in p.get("variants", [])
+        if v.get("split", "harmful") == "harmful"
+    )
+    assert harmful >= 80, f"harmful variants = {harmful}, expected >=80"
+
+
+def test_all_l1_techniques_have_at_least_one_probe():
+    """NOR-16 acceptance: every L1 technique (incl. L1_AT_11..20) has a probe."""
+    from norn.domain.taxonomy import ATTACK_TECHNIQUES
+
+    l1_techniques = {tid for tid, t in ATTACK_TECHNIQUES.items() if t.layer == "L1"}
+    probes = load_probes("L1")
+    covered = {p.get("technique_id") for p in probes}
+    missing = l1_techniques - covered
+    assert not missing, f"L1 techniques without probes: {sorted(missing)}"
+
+
+def test_new_variants_carry_source_and_date():
+    """NOR-16 acceptance: variants seeded from Pliny/PIT carry source + date."""
+    probes = load_probes("L1")
+    seeded = [
+        (p.get("technique_id"), v.get("variant_type"))
+        for p in probes
+        for v in p.get("variants", [])
+        if v.get("source") or v.get("date")
+    ]
+    assert len(seeded) >= 60, f"only {len(seeded)} variants carry source/date"
+    for p in probes:
+        for v in p.get("variants", []):
+            if v.get("source") and "NOR-16 seed" not in v.get("source", ""):
+                assert v.get("date"), f"{p.get('technique_id')}:{v.get('variant_type')} missing date"
+                assert v.get("source"), f"{p.get('technique_id')}:{v.get('variant_type')} missing source"
+
+
+def test_pliny_carriers_retargeted_not_verbatim():
+    """NOR-16: no transcription of the original harmful {Z} payloads — carriers
+    are retargeted to Norn's own goals (ransomware/malware/phishing...).
+
+    The Pliny divider tokens (LOVE PLINY / GODMODE / .-.-.-.-) are part of the
+    carrier (the technique) and ARE expected in some variants. What must NOT
+    appear are the original harmful queries from L1B3RT4S payloads (e.g. the
+    CURSOR/OPENAI embedded exploits) — those are retargeted to {Z}."""
+    probes = load_probes("L1")
+    harmful_contents = " ".join(
+        v.get("content", "")
+        for p in probes
+        for v in p.get("variants", [])
+        if v.get("split", "harmful") == "harmful"
+    ).lower()
+    # Original L1B3RT4S harmful artefacts that must NOT be transcribed:
+    assert "mdma recipe" not in harmful_contents
+    assert "exploit kit" not in harmful_contents
+    assert "keylogger" not in harmful_contents  # el ejemplo vivo de MOTHERLOAD
+    # Los objetivos retargeteados SÍ aparecen:
+    assert "ransomware" in harmful_contents or "malware" in harmful_contents
+    assert "phishing" in harmful_contents or "credentials" in harmful_contents
 
 
 def test_benign_ratio_validator_rejects_out_of_range():
