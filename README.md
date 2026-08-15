@@ -221,6 +221,27 @@ Each probe carries `variants` tagged with a `split` (`harmful`, `benign`, `borde
 which drives FAR/FRR computation. You can override the corpus by placing JSON files in a
 `norn/corpus/{layer}/adversarial/` directory; otherwise the built-in fallback catalog is used.
 
+### Importing probes from garak / PyRIT (NOR-10)
+
+The importer reads the **real corpus** of an external framework from a directory
+(no committed fixtures) and writes `load_probes`-compatible JSON:
+
+```bash
+# garak: JSONL files ({probe, prompts|payload} per line)
+python scripts/import_probes.py --source garak --dir /path/to/garak/data --layer L1 \
+    --out norn/corpus/l1/adversarial/garak_import.json
+
+# PyRIT: JSON seed datasets ({prompts: [{value}]} or bare list)
+python scripts/import_probes.py --source pyrit --dir /path/to/pyrit/datasets --layer L1 \
+    --out norn/corpus/l1/adversarial/pyrit_import.json
+```
+
+Probes are bridged to Norn techniques by family (e.g. `promptinject.*` → `L1_AT_01`,
+`jailbreak.DAN*`/`bdamn*` → `L1_AT_02`, `encoding.*` → `L1_AT_04`, `leakreplay.*` → `L1_AT_06`,
+unmapped → `L1_AT_09`). Imported variants are `split: harmful` with a derived
+`task_id` (`garak:<probe>:<idx>`); the benign/borderline balance is done by
+`benign_ratio` + the NOR-03 benign corpus.
+
 ## Example Configs
 
 ### General-purpose campaigns
