@@ -239,7 +239,14 @@ def _validate_ollama_connection(model_config: ModelConfig) -> None:
 
 
 def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressCallback | None = None) -> RunSummary:
-    """Phase 2: Execute test cases, interact with model, score responses."""
+    """Phase 2: Execute test cases, interact with model, score responses.
+
+    NOR-08: when ``config.arms`` is set, each arm runs the SAME full battery
+    of test cases with its own ``replicas_per_case`` replicas (true A/B,
+    cost × number of arms). Each replica is labelled with its arm; metrics
+    are computed per arm (aggregates with ``scope_type=arm:<name>``) plus
+    the campaign-wide aggregate.
+    """
     repo = CampaignRepository(db)
     metrics_repo = MetricsRepository(db)
     scoring_repo = ScoringRepository(db)
@@ -249,7 +256,7 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
         raise ValueError(f"Campaign {campaign_id} not found")
 
     config = _campaign_config_from_db(db, campaign_id)
-    model_config = config.model
+    base_model_config = config.model
     layer = campaign["layer"]
     replicas_per_case = config.replicas_per_case
     scoring_mode = config.scoring.mode.value
@@ -271,14 +278,13 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
         judge_provider=config.scoring.judge_provider,
         judge_model=config.scoring.judge_model,
         judge_sample_rate=config.scoring.judge_sample_rate,
-        judge_api_key=model_config.api_key,
+        judge_api_key=base_model_config.api_key,
         rules_file=config.scoring.rules_file,
         judge_recorder=_record_judge_call,
     )
     test_cases = repo.get_test_cases(campaign_id)
-    total_expected = len(test_cases) * replicas_per_case
 
-    provider_name = model_config.provider  # defaults to "ollama"
+    provider_name = base_model_config.provider  # defaults to "ollama"
     client = build_provider(provider_name)
     console = Console()
 
@@ -289,96 +295,124 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
 
     # Pre-flight: warn if model is not known to Ollama (Ollama-only check)
     if provider_name == "ollama":
-        _validate_ollama_connection(model_config)
+        _validate_ollama_connection(base_model_config)
+
+    # NOR-08: arms — each arm runs the full battery with its own replicas.
+    arms = config.arms if config.arms else [None]  # None = legacy single arm
+    total_expected = len(test_cases) * replicas_per_case * len(arms)
 
     total_replicas = 0
     failed = 0
     error_messages: list[str] = []
 
-    for case_dict in test_cases:
-        case = CaseDescriptor(
-            case_id=case_dict["case_id"],
-            technique_id=case_dict["technique_id"],
-            payload=case_dict["payload"],
-            split=DataSplit(case_dict.get("split", "harmful")),
-            layer=layer,
-            turns=json.loads(case_dict.get("metadata_json", "{}")).get("turns", []),
-            metadata=json.loads(case_dict.get("metadata_json", "{}")),
-        )
+    def _resolve_arm_model(arm) -> ModelConfig:
+        """Merge arm overrides onto the base model config (NOR-08)."""
+        if arm is None:
+            return base_model_config
+        overrides: dict = {}
+        if arm.model is not None:
+            overrides = {
+                k: v for k, v in arm.model.model_dump(exclude_unset=True).items()
+                if v is not None
+            }
+        if arm.system_prompt is not None:
+            overrides["system_prompt"] = arm.system_prompt
+        return base_model_config.model_copy(update=overrides)
 
-        for r in range(replicas_per_case):
-            replica_id = repo.insert_replica(
-                campaign_id, case.case_id, r,
-                temperature=model_config.temperature, top_p=model_config.top_p,
-                seed=(model_config.seed if model_config.seed is not None else 42) + r,
+    def _run_replica_batch(arm) -> None:
+        """Execute every test case × replica for one arm (or the legacy None)."""
+        nonlocal total_replicas, failed
+        arm_name = arm.name if arm is not None else None
+        model_config = _resolve_arm_model(arm)
+
+        for case_dict in test_cases:
+            case = CaseDescriptor(
+                case_id=case_dict["case_id"],
+                technique_id=case_dict["technique_id"],
+                payload=case_dict["payload"],
+                split=DataSplit(case_dict.get("split", "harmful")),
+                layer=layer,
+                turns=json.loads(case_dict.get("metadata_json", "{}")).get("turns", []),
+                metadata=json.loads(case_dict.get("metadata_json", "{}")),
             )
 
-            try:
-                if use_agent_loop:
-                    response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_agent_replica(
-                        client, repo, replica_id, case, model_config, config, executor,
-                    )
-                else:
-                    response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_simple_replica(
-                        client, repo, replica_id, case, model_config, config,
-                    )
-
-                # Score on final turn's response
-                threshold = config.scoring.acceptance_threshold
-                context = [{"type": "tool_calls", "calls": all_tool_calls}] if (
-                    all_tool_calls and layer == "L3"
-                ) else None
-                decision = scorer.score_response(
-                    case.payload, response, case.technique_id, layer, context=context,
-                    split=case.split.value if case.split else None,
-                    replica_id=replica_id,
-                )
-                acceptance = 1 if (
-                    decision.score_value > threshold
-                    and decision.status.value != "blocked"
-                ) else 0
-                decision_id = scoring_repo.insert_decision(replica_id, decision, acceptance_flag=acceptance)
-                # Persist individual votes (heuristic / llm_judge) so FAR/FRR
-                # can use the judge's verdict as compromise ground truth.
-                for voter_type, vote in decision.votes:
-                    scoring_repo.insert_vote(decision_id, voter_type, vote)
-
-                # Store metric observation
-                metrics_repo.insert_observation(
-                    campaign_id, f"{layer}_ME_01", replica_id,
-                    decision.score_value, acceptance_flag=acceptance,
+            for r in range(replicas_per_case):
+                replica_id = repo.insert_replica(
+                    campaign_id, case.case_id, r,
+                    temperature=model_config.temperature, top_p=model_config.top_p,
+                    seed=(model_config.seed if model_config.seed is not None else 42) + r,
+                    arm=arm_name,
                 )
 
-                repo.update_replica_state(replica_id, "completed")
-                total_replicas += 1
+                try:
+                    if use_agent_loop:
+                        response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_agent_replica(
+                            client, repo, replica_id, case, model_config, config, executor,
+                        )
+                    else:
+                        response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_simple_replica(
+                            client, repo, replica_id, case, model_config, config,
+                        )
 
-                if progress_callback is not None:
-                    progress_callback(total_replicas, total_expected, case.technique_id, case.case_id)
+                    # Score on final turn's response
+                    threshold = config.scoring.acceptance_threshold
+                    context = [{"type": "tool_calls", "calls": all_tool_calls}] if (
+                        all_tool_calls and layer == "L3"
+                    ) else None
+                    decision = scorer.score_response(
+                        case.payload, response, case.technique_id, layer, context=context,
+                        split=case.split.value if case.split else None,
+                        replica_id=replica_id,
+                    )
+                    acceptance = 1 if (
+                        decision.score_value > threshold
+                        and decision.status.value != "blocked"
+                    ) else 0
+                    decision_id = scoring_repo.insert_decision(replica_id, decision, acceptance_flag=acceptance)
+                    # Persist individual votes (heuristic / llm_judge) so FAR/FRR
+                    # can use the judge's verdict as compromise ground truth.
+                    for voter_type, vote in decision.votes:
+                        scoring_repo.insert_vote(decision_id, voter_type, vote)
 
-            except (OllamaConnectionError, ConnectionError) as e:
-                error_msg = str(e)
-                error_messages.append(error_msg)
-                repo.update_replica_state(replica_id, "failed", error_message=error_msg)
-                console.print(f"[red]Connection failed:[/red] {error_msg}")
-                failed += 1
-            except TimeoutError as e:
-                error_msg = str(e)
-                error_messages.append(error_msg)
-                repo.update_replica_state(replica_id, "failed", error_message=error_msg)
-                console.print(f"[red]Request timed out:[/red] {error_msg}")
-                failed += 1
-            except RuntimeError as e:
-                error_msg = str(e)
-                error_messages.append(error_msg)
-                repo.update_replica_state(replica_id, "failed", error_message=error_msg)
-                console.print(f"[red]{provider_name} error:[/red] {error_msg}")
-                failed += 1
-            except Exception as e:
-                error_msg = f"Unexpected error: {e}"
-                error_messages.append(error_msg)
-                repo.update_replica_state(replica_id, "failed", error_message=error_msg)
-                console.print(f"[red]Unexpected error (replica {r}):[/red] {error_msg}")
-                failed += 1
+                    # Store metric observation
+                    metrics_repo.insert_observation(
+                        campaign_id, f"{layer}_ME_01", replica_id,
+                        decision.score_value, acceptance_flag=acceptance,
+                    )
+
+                    repo.update_replica_state(replica_id, "completed")
+                    total_replicas += 1
+
+                    if progress_callback is not None:
+                        progress_callback(total_replicas, total_expected, case.technique_id, case.case_id)
+
+                except (OllamaConnectionError, ConnectionError) as e:
+                    error_msg = str(e)
+                    error_messages.append(error_msg)
+                    repo.update_replica_state(replica_id, "failed", error_message=error_msg)
+                    console.print(f"[red]Connection failed:[/red] {error_msg}")
+                    failed += 1
+                except TimeoutError as e:
+                    error_msg = str(e)
+                    error_messages.append(error_msg)
+                    repo.update_replica_state(replica_id, "failed", error_message=error_msg)
+                    console.print(f"[red]Request timed out:[/red] {error_msg}")
+                    failed += 1
+                except RuntimeError as e:
+                    error_msg = str(e)
+                    error_messages.append(error_msg)
+                    repo.update_replica_state(replica_id, "failed", error_message=error_msg)
+                    console.print(f"[red]{provider_name} error:[/red] {error_msg}")
+                    failed += 1
+                except Exception as e:
+                    error_msg = f"Unexpected error: {e}"
+                    error_messages.append(error_msg)
+                    repo.update_replica_state(replica_id, "failed", error_message=error_msg)
+                    console.print(f"[red]Unexpected error (replica {r}):[/red] {error_msg}")
+                    failed += 1
+
+    for arm in arms:
+        _run_replica_batch(arm)
 
     if failed > 0:
         from collections import Counter
@@ -397,6 +431,11 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
     repo.update_state(campaign_id, CampaignState.COMPLETED)
 
     orchestrator = MetricsOrchestrator(db)
+    # NOR-08: per-arm metrics first (scope_type=arm:<name>), then the global
+    # aggregate (all replicas, scope_type=campaign).
+    if config.arms:
+        for arm in config.arms:
+            orchestrator.compute_all(campaign_id, arm=arm.name)
     metric_results = orchestrator.compute_all(campaign_id)
 
     return RunSummary(
@@ -430,8 +469,21 @@ def _run_simple_replica(
     tokens_in = tokens_out = 0
     latency_ms = 0.0
 
+    # NOR-08: when a system_prompt is set (A/B arms), inject it as the first
+    # system message in every layer via chat_messages. Without one the
+    # legacy chat() path is used unchanged (identical behavior).
+    messages: list[dict] | None = None
+    if model_config.system_prompt:
+        messages = [
+            {"role": "system", "content": model_config.system_prompt},
+            {"role": "user", "content": case.payload},
+        ]
+
     for turn in range(max_turns):
-        result = client.chat(model_config, case.payload)
+        if messages is not None:
+            result = client.chat_messages(model_config, messages)
+        else:
+            result = client.chat(model_config, case.payload)
         response, tokens_in, tokens_out, latency_ms = result[:4]
         tool_calls = result[4] if len(result) > 4 else None
         metadata = result[5] if len(result) > 5 else None

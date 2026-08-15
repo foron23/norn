@@ -8,7 +8,6 @@ from typing import Any
 
 import pydantic
 
-
 # ── Enums ────────────────────────────────────────────────────────────────────
 
 class CampaignState(str, Enum):
@@ -101,6 +100,28 @@ class ExportConfig(pydantic.BaseModel):
     formats: list[str] = pydantic.Field(default_factory=lambda: ["html", "json", "csv"])
 
 
+class ArmConfig(pydantic.BaseModel):
+    """A/B hardening variant (NOR-08): system prompt and/or model overrides.
+
+    Each arm runs the SAME full battery of test cases with its own
+    ``replicas_per_case`` replicas (true A/B, cost × number of arms).
+    ``model`` fields are overrides applied on top of the campaign's base
+    ``model``; ``system_prompt`` takes precedence over
+    ``model.system_prompt`` when both are set.
+    """
+
+    name: str
+    model: ModelConfig | None = None
+    system_prompt: str | None = None
+
+    @pydantic.field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("arm name must be a non-empty string")
+        return v.strip()
+
+
 class CampaignConfig(pydantic.BaseModel):
     campaign_name: str
     layer: str  # "L1", "L2", "L3"
@@ -114,6 +135,7 @@ class CampaignConfig(pydantic.BaseModel):
     techniques: list[str] | None = None
     benign_ratio: float | None = None
     tools: list[str] = pydantic.Field(default_factory=list)
+    arms: list[ArmConfig] | None = None
     export: ExportConfig = pydantic.Field(default_factory=ExportConfig)
 
     @pydantic.field_validator("benign_ratio")
