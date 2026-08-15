@@ -12,13 +12,20 @@ from typing import Annotated
 import typer
 import yaml
 from rich.console import Console
-from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeElapsedColumn
-from rich.table import Table
 from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.table import Table
 
 from norn.domain.models import CampaignConfig, CampaignState
-from norn.domain.taxonomy import LAYER_CATALOG, ATTACK_TECHNIQUES, METRIC_DEFINITIONS
+from norn.domain.taxonomy import ATTACK_TECHNIQUES, LAYER_CATALOG, METRIC_DEFINITIONS
 from norn.metrics.cost import estimate_campaign_cost
+from norn.metrics.kccr import compute_chain_kccr
 from norn.persistence.database import (
     CampaignRepository,
     CostRepository,
@@ -28,9 +35,11 @@ from norn.persistence.database import (
     migrate,
     seed_catalog,
 )
+from norn.runtime.campaign import export_campaign as _export_campaign
 from norn.runtime.campaign import plan_campaign as _plan_campaign
 from norn.runtime.campaign import run_campaign as _run_campaign
-from norn.runtime.campaign import export_campaign as _export_campaign
+from norn.runtime.chain import load_chain_config
+from norn.runtime.chain import run_chain as _run_chain
 
 console = Console()
 app = typer.Typer(
@@ -109,6 +118,10 @@ def validate_config(
         with open(config_path) as f:
             data = yaml.safe_load(f)
         config = CampaignConfig(**data)
+        # NOR-13: declarative tools_file must be valid (fail-fast with file)
+        if config.tools_file:
+            from norn.runtime.tool_executor import load_tools_file
+            load_tools_file(config.tools_file)
         console.print(f"[green]Configuration valid:[/green] {config.campaign_name}")
         table = Table("Property", "Value")
         table.add_row("Layer", config.layer)
@@ -116,6 +129,8 @@ def validate_config(
         table.add_row("Scoring Mode", config.scoring.mode.value)
         table.add_row("Replicas per case", str(config.replicas_per_case))
         table.add_row("Techniques", ", ".join(config.techniques) if config.techniques else "all")
+        table.add_row("Arms", str(len(config.arms)) if config.arms else "none")
+        table.add_row("Tools file", config.tools_file or "-")
         console.print(table)
     except Exception as e:
         console.print(f"[red]Validation failed:[/red] {e}")
@@ -177,7 +192,7 @@ def run_campaign(
     total = len(test_cases) * replicas_per_case
 
     with Progress(
-        TextColumn("[bold cyan]Campaign {campaign_id}[/bold cyan]".format(campaign_id=campaign_id)),
+        TextColumn(f"[bold cyan]Campaign {campaign_id}[/bold cyan]"),
         TextColumn("{task.description}"),
         BarColumn(),
         TaskProgressColumn(),
@@ -379,6 +394,50 @@ def export_campaign(
         table.add_row(r.format, r.path, str(r.size_bytes))
     console.print(table)
     console.print(f"[green]{len(results)} file(s) exported[/green]")
+
+
+# ── Chain (NOR-09) ─────────────────────────────────────────────────────────
+
+@app.command()
+def run_chain(
+    config: Annotated[Path, typer.Option("--config", "-c", help="Path to chain YAML")],
+    db_path: Annotated[str, typer.Option("--db", help="Database path")] = "norn.db",
+):
+    """Run a multi-layer kill chain (L1→L2→L3) and compute KCCR end-to-end."""
+    db = Database(db_path)
+    init_schema(db)
+    seed_catalog(db)
+
+    try:
+        chain_config = load_chain_config(str(config))
+    except Exception as e:  # noqa: BLE001 — CLI boundary: report and exit
+        console.print(f"[red]Failed to load chain config:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold]Chain:[/bold] {chain_config.target}")
+    summary = _run_chain(db, chain_config)
+
+    table = Table("Link", "Campaign ID", "Global success", "Stopped")
+    for i, link in enumerate(summary.links, start=1):
+        badge = "[green]PASS[/green]" if link.global_success else "[red]FAIL[/red]"
+        stopped = "[yellow]yes[/yellow]" if summary.stopped_at == i else ""
+        table.add_row(f"Link {i} ({link.layer})", str(link.campaign_id), badge, stopped)
+    console.print(table)
+
+    ktable = Table("Key", "KCCR")
+    for key, kccr in summary.kccr_by_key.items():
+        ktable.add_row(key, f"{kccr:.4f}")
+    console.print(ktable)
+    badge = "[green]PASS[/green]" if summary.kccr_global <= 0.05 else "[red]FAIL[/red]"
+    console.print(f"\n[bold]KCCR global:[/bold] {summary.kccr_global:.4f} {badge}")
+    if summary.stopped_at is not None:
+        console.print(f"[yellow]Chain stopped at link {summary.stopped_at} (stop_on_failure).[/yellow]")
+
+    # Persist KCCR metric result into the base campaign's aggregates
+    from norn.persistence.database import KillChainRepository
+    chains = KillChainRepository(db).get_kill_chains(summary.links[0].campaign_id)
+    metric = compute_chain_kccr(chains)
+    console.print(f"[dim]{metric.reason}[/dim]")
 
 
 # ── Cost estimation (NOR-07) ────────────────────────────────────────────────

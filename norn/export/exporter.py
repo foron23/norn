@@ -65,6 +65,16 @@ class CsvExporter:
                     "source": "",
                 })
 
+        # NOR-08: sidecar replicas file when the campaign used A/B arms
+        # (per-arm replicas don't fit the per-case rows above).
+        replicas = data.get("replicas", [])
+        if replicas and any(r.get("arm") for r in replicas):
+            rep_path = os.path.join(output_dir, f"campaign_{campaign_id}_replicas.csv")
+            with open(rep_path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=replicas[0].keys())
+                writer.writeheader()
+                writer.writerows(replicas)
+
         size = os.path.getsize(path)
         return ExportResult(path=path, format="csv", size_bytes=size)
 

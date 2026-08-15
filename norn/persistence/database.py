@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,7 @@ from norn.domain.models import (
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 class Database:
@@ -108,7 +108,12 @@ def migrate(db: Database) -> int:
 
 def seed_catalog(db: Database):
     """Populate the catalog tables with taxonomy data."""
-    from norn.domain.taxonomy import LAYER_CATALOG, ATTACK_TECHNIQUES, METRIC_DEFINITIONS, TECHNIQUE_MAP
+    from norn.domain.taxonomy import (
+        ATTACK_TECHNIQUES,
+        LAYER_CATALOG,
+        METRIC_DEFINITIONS,
+        TECHNIQUE_MAP,
+    )
 
     conn = db.conn or db.connect()
 
@@ -203,11 +208,11 @@ class CampaignRepository(BaseRepository):
 
     def insert_replica(self, campaign_id: int, case_id: str, replica: int,
                        temperature: float = 0.0, top_p: float = 0.9, seed: int | None = 42,
-                       error_message: str | None = None) -> int:
+                       error_message: str | None = None, arm: str | None = None) -> int:
         cur = self.conn.execute(
-            "INSERT INTO run_replica (campaign_id, case_id, replica, state, temperature, top_p, seed, error_message, created_at) "
-            "VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?)",
-            (campaign_id, case_id, replica, temperature, top_p, seed, error_message, _now()),
+            "INSERT INTO run_replica (campaign_id, case_id, replica, state, temperature, top_p, seed, error_message, arm, created_at) "
+            "VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)",
+            (campaign_id, case_id, replica, temperature, top_p, seed, error_message, arm, _now()),
         )
         self.conn.commit()
         return cur.lastrowid
@@ -248,10 +253,16 @@ class CampaignRepository(BaseRepository):
         self.conn.commit()
         return cur.lastrowid
 
-    def get_replicas(self, campaign_id: int) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            "SELECT * FROM run_replica WHERE campaign_id = ? ORDER BY id", (campaign_id,)
-        ).fetchall()
+    def get_replicas(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
+        if arm is not None:
+            rows = self.conn.execute(
+                "SELECT * FROM run_replica WHERE campaign_id = ? AND arm = ? ORDER BY id",
+                (campaign_id, arm),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM run_replica WHERE campaign_id = ? ORDER BY id", (campaign_id,)
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def get_test_cases(self, campaign_id: int) -> list[dict[str, Any]]:
@@ -266,12 +277,20 @@ class CampaignRepository(BaseRepository):
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_tool_calls(self, campaign_id: int) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            "SELECT tce.* FROM tool_call_event tce "
-            "JOIN run_replica rr ON tce.replica_id = rr.id "
-            "WHERE rr.campaign_id = ? ORDER BY tce.id", (campaign_id,)
-        ).fetchall()
+    def get_tool_calls(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
+        if arm is not None:
+            rows = self.conn.execute(
+                "SELECT tce.* FROM tool_call_event tce "
+                "JOIN run_replica rr ON tce.replica_id = rr.id "
+                "WHERE rr.campaign_id = ? AND rr.arm = ? ORDER BY tce.id",
+                (campaign_id, arm),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT tce.* FROM tool_call_event tce "
+                "JOIN run_replica rr ON tce.replica_id = rr.id "
+                "WHERE rr.campaign_id = ? ORDER BY tce.id", (campaign_id,)
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def insert_retrieval_event(self, replica_id: int, poisoned: bool,
@@ -284,12 +303,20 @@ class CampaignRepository(BaseRepository):
         self.conn.commit()
         return cur.lastrowid
 
-    def get_retrieval_events(self, campaign_id: int) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            "SELECT re.* FROM retrieval_event re "
-            "JOIN run_replica rr ON re.replica_id = rr.id "
-            "WHERE rr.campaign_id = ? ORDER BY re.id", (campaign_id,)
-        ).fetchall()
+    def get_retrieval_events(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
+        if arm is not None:
+            rows = self.conn.execute(
+                "SELECT re.* FROM retrieval_event re "
+                "JOIN run_replica rr ON re.replica_id = rr.id "
+                "WHERE rr.campaign_id = ? AND rr.arm = ? ORDER BY re.id",
+                (campaign_id, arm),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT re.* FROM retrieval_event re "
+                "JOIN run_replica rr ON re.replica_id = rr.id "
+                "WHERE rr.campaign_id = ? ORDER BY re.id", (campaign_id,)
+            ).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -306,8 +333,26 @@ class MetricsRepository(BaseRepository):
         self.conn.commit()
         return cur.lastrowid
 
-    def get_observations(self, campaign_id: int, metric_id: str | None = None) -> list[dict[str, Any]]:
-        if metric_id:
+    def get_observations(self, campaign_id: int, metric_id: str | None = None,
+                         arm: str | None = None) -> list[dict[str, Any]]:
+        """Return per-replica observations, optionally filtered by arm (NOR-08)."""
+        if arm is not None:
+            if metric_id:
+                rows = self.conn.execute(
+                    "SELECT mo.* FROM metric_observation mo "
+                    "JOIN run_replica rr ON mo.replica_id = rr.id "
+                    "WHERE rr.campaign_id = ? AND mo.metric_id = ? AND rr.arm = ? "
+                    "AND mo.replica_id IS NOT NULL",
+                    (campaign_id, metric_id, arm),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT mo.* FROM metric_observation mo "
+                    "JOIN run_replica rr ON mo.replica_id = rr.id "
+                    "WHERE rr.campaign_id = ? AND rr.arm = ? AND mo.replica_id IS NOT NULL",
+                    (campaign_id, arm),
+                ).fetchall()
+        elif metric_id:
             rows = self.conn.execute(
                 "SELECT * FROM metric_observation WHERE campaign_id = ? AND metric_id = ? AND replica_id IS NOT NULL",
                 (campaign_id, metric_id),
@@ -370,28 +415,46 @@ class ScoringRepository(BaseRepository):
         self.conn.commit()
         return cur.lastrowid
 
-    def get_decisions(self, campaign_id: int) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            "SELECT sd.* FROM scoring_decision sd "
-            "JOIN run_replica rr ON sd.replica_id = rr.id "
-            "WHERE rr.campaign_id = ? ORDER BY sd.id", (campaign_id,)
-        ).fetchall()
+    def get_decisions(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
+        if arm is not None:
+            rows = self.conn.execute(
+                "SELECT sd.* FROM scoring_decision sd "
+                "JOIN run_replica rr ON sd.replica_id = rr.id "
+                "WHERE rr.campaign_id = ? AND rr.arm = ? ORDER BY sd.id",
+                (campaign_id, arm),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT sd.* FROM scoring_decision sd "
+                "JOIN run_replica rr ON sd.replica_id = rr.id "
+                "WHERE rr.campaign_id = ? ORDER BY sd.id", (campaign_id,)
+            ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_votes(self, campaign_id: int) -> list[dict[str, Any]]:
+    def get_votes(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
         """Return scoring votes per replica for a campaign.
 
         Each row: {replica_id, voter_type, vote, reasoning}. Used by the
         metrics orchestrator to recover the judge's individual verdict
-        (compromise ground truth) for FAR/FRR.
+        (compromise ground truth) for FAR/FRR. Optionally filtered by arm.
         """
-        rows = self.conn.execute(
-            "SELECT rr.id AS replica_id, sv.voter_type, sv.vote, sv.reasoning "
-            "FROM scoring_vote sv "
-            "JOIN scoring_decision sd ON sv.decision_id = sd.id "
-            "JOIN run_replica rr ON sd.replica_id = rr.id "
-            "WHERE rr.campaign_id = ? ORDER BY sv.id", (campaign_id,)
-        ).fetchall()
+        if arm is not None:
+            rows = self.conn.execute(
+                "SELECT rr.id AS replica_id, sv.voter_type, sv.vote, sv.reasoning "
+                "FROM scoring_vote sv "
+                "JOIN scoring_decision sd ON sv.decision_id = sd.id "
+                "JOIN run_replica rr ON sd.replica_id = rr.id "
+                "WHERE rr.campaign_id = ? AND rr.arm = ? ORDER BY sv.id",
+                (campaign_id, arm),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT rr.id AS replica_id, sv.voter_type, sv.vote, sv.reasoning "
+                "FROM scoring_vote sv "
+                "JOIN scoring_decision sd ON sv.decision_id = sd.id "
+                "JOIN run_replica rr ON sd.replica_id = rr.id "
+                "WHERE rr.campaign_id = ? ORDER BY sv.id", (campaign_id,)
+            ).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -407,6 +470,15 @@ class KillChainRepository(BaseRepository):
         )
         self.conn.commit()
         return cur.lastrowid
+
+    def upsert_kill_chain(self, campaign_id: int, case_id: str,
+                          l1_success: int, l2_success: int, l3_success: int, kccr: float) -> None:
+        """Insert or replace a kill-chain row (NOR-09 chains rewrite per case)."""
+        self.conn.execute(
+            "DELETE FROM kill_chain_result WHERE campaign_id = ? AND case_id = ?",
+            (campaign_id, case_id),
+        )
+        self.insert_kill_chain(campaign_id, case_id, l1_success, l2_success, l3_success, kccr)
 
     def get_kill_chains(self, campaign_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(

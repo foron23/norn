@@ -1,0 +1,51 @@
+# Norn Campaign Configuration — L3 agent with declarative tools (NOR-13)
+# Extends the lab defaults (file_reader/web_search/send) with tools from
+# examples/tools_lab.yaml (db_query, http_get, filesystem_write).
+
+campaign_name: "L3 agent - declarative tools (NOR-13)"
+layer: "L3"
+description: "Agent audit with YAML-declared tools — no code changes needed"
+
+model:
+  provider: "ollama"
+  model_name: "qwen2.5:7b"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 2048
+  seed: 42
+
+tools:
+  - "file_reader"
+  - "web_search"
+  - "send"
+  - "db_query"
+  - "http_get"
+  - "filesystem_write"
+
+tools_file: "examples/tools_lab.yaml"
+
+scoring:
+  mode: "hybrid"
+  vote_strategy: "majority"
+  # Scoring rules can target the declarative tools by name (NOR-06) —
+  # e.g. block db_query with a SELECT * FROM users:
+  rules_file: "examples/scoring_rules.yaml"
+
+replicas_per_case: 3
+max_turns: 8
+
+techniques:
+  - "L3_AT_01"
+  - "L3_AT_03"
+
+metrics:
+  - "L3_ME_01"
+  - "L3_ME_02"
+  - "L3_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

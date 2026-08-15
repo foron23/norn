@@ -93,7 +93,7 @@
 <div class="section">
     <h3>Security Metrics</h3>
     <div class="metric-cards">
-        {% for m in metrics_aggr %}
+        {% for m in metrics_aggr if m.scope_type == 'campaign' %}
         <div class="metric-card {{ 'pass' if (m.mean is defined and m.mean < 0.1) else 'fail' }}">
             <div class="metric-value">{{ "%.4f"|format(m.mean if m.mean is defined else 0) }}</div>
             <div class="metric-name">{{ m.metric_id if m.metric_id else 'Metric' }}
@@ -112,6 +112,26 @@
     <canvas id="metricsChart" style="max-height: 300px; margin-top: 2rem;"></canvas>
     {% endif %}
 </div>
+
+<!-- Arm Comparison (NOR-08) -->
+{% set arm_aggr = metrics_aggr|selectattr('scope_type', 'ne', 'campaign')|list %}
+{% if arm_aggr %}
+<div class="section">
+    <h3>Arm Comparison (A/B)</h3>
+    <table>
+        <tr><th>Arm</th><th>Metric</th><th>Mean</th><th>CI95 Lower</th><th>CI95 Upper</th></tr>
+        {% for m in arm_aggr %}
+        <tr>
+            <td>{{ m.scope_type|replace('arm:', '') }}</td>
+            <td>{{ m.metric_id }}</td>
+            <td>{{ "%.4f"|format(m.mean if m.mean is defined else 0) }}</td>
+            <td>{{ "%.4f"|format(m.ci95_lower if m.ci95_lower is defined else 0) }}</td>
+            <td>{{ "%.4f"|format(m.ci95_upper if m.ci95_upper is defined else 0) }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</div>
+{% endif %}
 
 <!-- Kill Chain -->
 {% if kill_chains %}
