@@ -291,7 +291,10 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
     # NOR-01: L3 campaigns with tools configured run the real agent loop.
     # Without tools (or for L1/L2) the legacy simple loop is used unchanged.
     use_agent_loop = layer == "L3" and bool(config.tools)
-    executor = ToolExecutor(config.tools) if use_agent_loop else None
+    executor = None
+    if use_agent_loop:
+        # NOR-13: declarative tools_file (add-only) extends the lab defaults.
+        executor = ToolExecutor(config.tools, tools_file=config.tools_file)
 
     # Pre-flight: warn if model is not known to Ollama (Ollama-only check)
     if provider_name == "ollama":

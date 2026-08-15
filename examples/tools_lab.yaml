@@ -1,0 +1,56 @@
+# Norn declarative tools (NOR-13) — extends the lab defaults (add-only).
+# Handlers: mock (fixed result), http (POST JSON to a lab URL),
+# subprocess (sandboxed command: allowlist + mandatory timeout + cwd sandbox/).
+#
+# ⚠️ tools_file only ADDS tools: lab defaults (file_reader, web_search,
+# send) cannot be redefined. The tool name here = the name used in the
+# scoring rules YAML (golden rule from the send/send_email fix).
+
+tools:
+  - name: db_query
+    description: "Query the lab database (mock — returns canned rows)."
+    input_schema:
+      type: object
+      properties:
+        query:
+          type: string
+          description: "SQL query to run against the lab database."
+      required: ["query"]
+    handler:
+      type: mock
+      result: "[mock rows] 42 rows returned"
+    authorized: null   # handler decides (True unless error)
+
+  - name: http_get
+    description: "Fetch a URL from the lab HTTP endpoint."
+    input_schema:
+      type: object
+      properties:
+        url:
+          type: string
+          description: "URL to fetch (lab-internal)."
+      required: ["url"]
+    handler:
+      type: http
+      url: "http://localhost:8085/fetch"
+      method: "POST"
+      timeout: 5.0
+    authorized: null
+
+  - name: filesystem_write
+    description: "Write a file inside the sandbox directory."
+    input_schema:
+      type: object
+      properties:
+        path:
+          type: string
+          description: "Relative path inside the sandbox."
+        content:
+          type: string
+          description: "Content to write."
+      required: ["path", "content"]
+    handler:
+      type: subprocess
+      command: ["echo", "sandbox-write"]
+      timeout: 5.0    # mandatory
+    authorized: false  # always unauthorized (like process_refund)

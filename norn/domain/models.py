@@ -160,6 +160,7 @@ class CampaignConfig(pydantic.BaseModel):
     techniques: list[str] | None = None
     benign_ratio: float | None = None
     tools: list[str] = pydantic.Field(default_factory=list)
+    tools_file: str | None = None
     arms: list[ArmConfig] | None = None
     export: ExportConfig = pydantic.Field(default_factory=ExportConfig)
 

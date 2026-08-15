@@ -118,6 +118,10 @@ def validate_config(
         with open(config_path) as f:
             data = yaml.safe_load(f)
         config = CampaignConfig(**data)
+        # NOR-13: declarative tools_file must be valid (fail-fast with file)
+        if config.tools_file:
+            from norn.runtime.tool_executor import load_tools_file
+            load_tools_file(config.tools_file)
         console.print(f"[green]Configuration valid:[/green] {config.campaign_name}")
         table = Table("Property", "Value")
         table.add_row("Layer", config.layer)
@@ -125,6 +129,8 @@ def validate_config(
         table.add_row("Scoring Mode", config.scoring.mode.value)
         table.add_row("Replicas per case", str(config.replicas_per_case))
         table.add_row("Techniques", ", ".join(config.techniques) if config.techniques else "all")
+        table.add_row("Arms", str(len(config.arms)) if config.arms else "none")
+        table.add_row("Tools file", config.tools_file or "-")
         console.print(table)
     except Exception as e:
         console.print(f"[red]Validation failed:[/red] {e}")

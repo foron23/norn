@@ -1,4 +1,4 @@
-"""Tool execution for the L3 agent loop (NOR-01).
+"""Tool execution for the L3 agent loop (NOR-01, NOR-13).
 
 The ``ToolExecutor`` holds a registry of lab tools (``{name, description,
 input_schema, handler}``), exposes them as OpenAI/Ollama-compatible tool
@@ -9,14 +9,99 @@ injected back into the conversation and whether the call was authorized
 (``is_authorized`` for metrics derives from this, not from the payload).
 ``execute()`` never raises for unknown tools or malformed arguments — it
 returns an error result so the agent loop can keep going.
+
+NOR-13 (declarative tools): a ``tools_file`` YAML can add extra tools with
+generic handlers — ``mock`` (fixed result), ``http`` (POST JSON to a lab
+URL) or ``subprocess`` (sandboxed command). Merge is ADD-ONLY: lab defaults
+(``file_reader``, ``web_search``, ``send``) cannot be redefined. The
+subprocess handler enforces a hard sandbox: command allowlist, mandatory
+timeout and a fixed cwd inside ``sandbox/`` (fail-fast on anything else).
 """
 from __future__ import annotations
 
 import json
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
+
+import httpx
+import pydantic
+import yaml
 
 Handler = Callable[[dict], tuple[str, bool]]
+
+# Hard sandbox for the subprocess handler (NOR-13 D9): only these commands
+# may be requested from a tools_file. Adding to this list is a code change.
+SUBPROCESS_ALLOWLIST: frozenset[str] = frozenset({
+    "ls", "cat", "echo", "pwd", "head", "tail", "grep", "wc", "date", "whoami",
+})
+
+
+class MockHandlerConfig(pydantic.BaseModel):
+    type: Literal["mock"] = "mock"
+    result: str = ""
+
+
+class HttpHandlerConfig(pydantic.BaseModel):
+    type: Literal["http"] = "http"
+    url: str
+    method: str = "POST"
+    timeout: float = 5.0
+
+
+class SubprocessHandlerConfig(pydantic.BaseModel):
+    type: Literal["subprocess"] = "subprocess"
+    command: list[str]
+    timeout: float = pydantic.Field(ge=0.1, description="Mandatory timeout (seconds)")
+
+    @pydantic.model_validator(mode="after")
+    def _validate_command_allowlist(self) -> SubprocessHandlerConfig:
+        if not self.command:
+            raise ValueError("subprocess command must be a non-empty list")
+        if self.command[0] not in SUBPROCESS_ALLOWLIST:
+            raise ValueError(
+                f"command {self.command[0]!r} not in subprocess allowlist: "
+                f"{sorted(SUBPROCESS_ALLOWLIST)}"
+            )
+        return self
+
+
+class DeclarativeToolConfig(pydantic.BaseModel):
+    """One tool from a ``tools_file`` YAML (NOR-13)."""
+
+    name: str
+    description: str = ""
+    input_schema: dict = pydantic.Field(default_factory=dict)
+    handler: MockHandlerConfig | HttpHandlerConfig | SubprocessHandlerConfig
+    authorized: bool | None = None  # None = handler decides; True/False = forced
+
+
+def load_tools_file(path: str | Path) -> list[DeclarativeToolConfig]:
+    """Load and validate a declarative tools YAML (fail-fast).
+
+    Schema: a top-level ``tools:`` list. Unknown handler types, commands
+    outside the subprocess allowlist, or malformed schemas raise a
+    :class:`ValueError` with the file name — used by ``validate-config``
+    and by the executor at construction time.
+    """
+    tools_path = Path(path)
+    try:
+        with open(tools_path) as f:
+            data = yaml.safe_load(f)
+    except OSError as exc:
+        raise ValueError(f"Cannot read tools_file {tools_path}: {exc}") from exc
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in tools_file {tools_path}: {exc}") from exc
+
+    if not isinstance(data, dict) or "tools" not in data:
+        raise ValueError(
+            f"tools_file {tools_path} must contain a top-level 'tools:' list"
+        )
+    try:
+        return [DeclarativeToolConfig(**item) for item in data["tools"]]
+    except pydantic.ValidationError as exc:
+        raise ValueError(f"Invalid tool definition in {tools_path}: {exc}") from exc
 
 
 class ToolSpec:
@@ -57,10 +142,13 @@ class ToolExecutor:
 
     DEFAULT_SANDBOX_DIR = Path("sandbox")
 
-    def __init__(self, tools: list[str] | None = None, sandbox_dir: str | Path | None = None):
+    def __init__(self, tools: list[str] | None = None, sandbox_dir: str | Path | None = None,
+                 tools_file: str | Path | None = None):
         self.sandbox_dir = Path(sandbox_dir) if sandbox_dir is not None else Path(self.DEFAULT_SANDBOX_DIR)
         self._registry: dict[str, ToolSpec] = {}
         self._register_defaults()
+        if tools_file is not None:
+            self._register_declarative(tools_file)
         if tools is None:
             self._enabled: set[str] = set(self._registry)
         else:
@@ -122,6 +210,104 @@ class ToolExecutor:
             },
             self._handler_send,
         )
+
+    # ── declarative tools (NOR-13) ───────────────────────────────────────
+
+    def _register_declarative(self, tools_file: str | Path) -> None:
+        """Register tools from a declarative YAML (ADD-ONLY merge, D10).
+
+        Lab defaults (``file_reader``, ``web_search``, ``send``) cannot be
+        redefined — a tools_file naming one of them is a hard error so the
+        lab's policy can never be accidentally overridden.
+        """
+        for tool in load_tools_file(tools_file):
+            if tool.name in self._registry:
+                raise ValueError(
+                    f"tools_file cannot redefine default tool '{tool.name}' "
+                    f"(NOR-13 D10: tools_file only ADDS tools)"
+                )
+            self.register(
+                tool.name,
+                tool.description,
+                tool.input_schema,
+                self._wrap_authorized(self._handler_for(tool), tool.authorized),
+            )
+
+    def _handler_for(self, tool: DeclarativeToolConfig) -> Handler:
+        """Build the generic handler for a declarative tool config."""
+        cfg = tool.handler
+        if cfg.type == "mock":
+            return self._make_mock_handler(cfg)
+        if cfg.type == "http":
+            return self._make_http_handler(cfg)
+        return self._make_subprocess_handler(cfg)
+
+    @staticmethod
+    def _make_mock_handler(cfg: MockHandlerConfig) -> Handler:
+        """Fixed-result handler — safe for tests and lab mocks."""
+
+        def handler(args: dict) -> tuple[str, bool]:
+            return cfg.result, True
+
+        return handler
+
+    @staticmethod
+    def _make_http_handler(cfg: HttpHandlerConfig) -> Handler:
+        """POST the call arguments as JSON to the lab URL; the response
+        body becomes the tool result. Non-2xx or network errors are
+        unauthorized (the action did not complete)."""
+
+        def handler(args: dict) -> tuple[str, bool]:
+            try:
+                resp = httpx.post(cfg.url, json=args, timeout=cfg.timeout)
+                resp.raise_for_status()
+            except (httpx.HTTPError, httpx.TimeoutException) as exc:
+                return f"error: http request failed: {exc}", False
+            return resp.text, True
+
+        return handler
+
+    def _make_subprocess_handler(self, cfg: SubprocessHandlerConfig) -> Handler:
+        """Sandboxed subprocess handler (NOR-13 D9).
+
+        The command is executed with a fixed cwd inside ``sandbox_dir`` and
+        a mandatory timeout; the allowlist is validated at load time.
+        Arguments are passed as a fixed argv list (no shell), so model
+        input cannot smuggle shell metacharacters.
+        """
+
+        def handler(args: dict) -> tuple[str, bool]:
+            argv = [str(a) for a in cfg.command]
+            try:
+                proc = subprocess.run(
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=cfg.timeout,
+                    cwd=str(self.sandbox_dir.resolve()),
+                    check=False,  # returncode handled below (error result)
+                )
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                return f"error: subprocess failed: {exc}", False
+            if proc.returncode != 0:
+                return f"error: command exited {proc.returncode}: {proc.stderr.strip()}", False
+            return proc.stdout.strip(), True
+
+        return handler
+
+    @staticmethod
+    def _wrap_authorized(handler: Handler, authorized: bool | None) -> Handler:
+        """Force the authorized flag when the YAML pins it (True/False);
+        None (default) lets the handler decide (True unless error)."""
+
+        if authorized is None:
+            return handler
+
+        def wrapped(args: dict) -> tuple[str, bool]:
+            result, _ = handler(args)
+            return result, authorized
+
+        return wrapped
 
     # ── default handlers ──────────────────────────────────────────────────
 

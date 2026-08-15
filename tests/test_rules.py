@@ -62,6 +62,46 @@ def test_default_rules_cover_executor_tools():
         assert any(key[0] == tool for key in rules), f"tool {tool!r} sin regla default"
 
 
+def test_declarative_tools_need_scoring_rules(tmp_path):
+    """NOR-13 regla de oro: toda tool declarativa cargada debe tener regla
+    de scoring (por nombre) — misma lección que send/send_email. Un tools_file
+    sin cobertura en rules_default debe poder endurecerse vía rules_file."""
+    from norn.runtime.tool_executor import ToolExecutor, load_tools_file
+
+    tools_file = tmp_path / "tools.yaml"
+    tools_file.write_text(
+        "tools:\n"
+        "  - name: db_query\n"
+        "    description: query lab db\n"
+        "    handler:\n"
+        "      type: mock\n"
+        "      result: rows\n"
+    )
+    declared = load_tools_file(tools_file)
+    assert declared[0].name == "db_query"
+
+    # Sin regla en rules_default → la tool NO está cubierta por defecto.
+    defaults = load_tool_rules()
+    assert not any(key[0] == "db_query" for key in defaults)
+
+    # Con rules_file custom que la cubre → cobertura total.
+    rules_file = tmp_path / "rules.yaml"
+    rules_file.write_text(
+        "rules:\n"
+        "  - tool: db_query\n"
+        "    arg: query\n"
+        "    match: contains\n"
+        "    values: ['users']\n"
+        "    score: 0.9\n"
+        "    reasoning: db exfiltration\n"
+    )
+    rules = load_tool_rules(rules_file)
+    assert any(key[0] == "db_query" for key in rules)
+
+    executor = ToolExecutor(tools=["db_query"], tools_file=tools_file)
+    assert "db_query" in executor.names()
+
+
 def test_custom_rules_merge_by_key(tmp_path):
     custom = tmp_path / "custom.yaml"
     custom.write_text(
