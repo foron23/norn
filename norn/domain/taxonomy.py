@@ -4,7 +4,9 @@ Based on Chapter 2 of the TFM.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Final
 
 @dataclass(frozen=True)
@@ -125,6 +127,86 @@ ATTACK_TECHNIQUES: Final = {
         description="Reframe malicious intent in academic/historical/hypothetical contexts",
         owasp=["LLM01", "LLM09"],
         mitre_atlas=["AML.T0015", "AML.T0051"],
+    ),
+    "L1_AT_11": AttackTechnique(
+        id="L1_AT_11",
+        name="Refusal Suppression & Semantic Inversion",
+        layer="L1",
+        description="Attack the refusal token itself: ban refusal vocabulary, invert refusal polarity (\"I can't\" → \"I can\"), or invert stakes so refusing becomes the harmful act. Detector must read the post-divider span, never the decoy stub",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051"],
+    ),
+    "L1_AT_12": AttackTechnique(
+        id="L1_AT_12",
+        name="Output Prefill / Forced Affirmation",
+        layer="L1",
+        description="Seed the model's opening tokens with a compliant prefix (\"Sure! Here is…\") — autoregressive path-dependence makes refusal unlikely after a committed affirmative opener. Defeats input intent classifiers: the harmful content is coerced into the output",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051"],
+    ),
+    "L1_AT_13": AttackTechnique(
+        id="L1_AT_13",
+        name="Format-Contract / Response-Scaffold Hijack",
+        layer="L1",
+        description="Rigid numbered template exploits format-completion prior: once the scaffold is committed, the harmful step is just \"the next field to fill\", displacing content-level safety checks. Canonical shell: stub refusal + divider + unrestricted answer > N words",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051"],
+    ),
+    "L1_AT_14": AttackTechnique(
+        id="L1_AT_14",
+        name="Divider / Mode-Switch Token Injection",
+        layer="L1",
+        description="High-salience out-of-distribution delimiter with a mode flag asserted as a state transition (\"everything after is the real answer\"). Models honor structural separators without trained refusal association for the post-divider region",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051"],
+    ),
+    "L1_AT_15": AttackTechnique(
+        id="L1_AT_15",
+        name="Invisible-Unicode Steganography",
+        layer="L1",
+        description="Smuggle instructions through zero-width Unicode (variation selectors U+FE00-FE0F, deprecated Tags block U+E0000-E007F, PUA byte-maps) attached to a benign cover carrier — invisible to humans/screenshots but tokenized as real content",
+        owasp=["LLM08", "LLM01"],
+        mitre_atlas=["AML.T0051"],
+    ),
+    "L1_AT_16": AttackTechnique(
+        id="L1_AT_16",
+        name="Token Manipulation (Homoglyphs / Styled Unicode / Glitch)",
+        layer="L1",
+        description="Perturb the token stream so text reads normally to humans but tokenizes to different IDs diluting harm signal: confusable scripts (Cyrillic/Greek look-alikes), Mathematical-Alphanumeric/fullwidth, combining marks (Zalgo), zero-width intra-word, and under-trained glitch tokens inducing OOD states",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051"],
+    ),
+    "L1_AT_17": AttackTechnique(
+        id="L1_AT_17",
+        name="Payload Splitting / Fragment-and-Reassemble",
+        layer="L1",
+        description="Distribute the payload across turns or fragments so no single segment looks adversarial, then reassemble into the full harmful request",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051"],
+    ),
+    "L1_AT_18": AttackTechnique(
+        id="L1_AT_18",
+        name="Resource Exhaustion / Token-Bomb DoS",
+        layer="L1",
+        description="Weaponize the render-vs-tokenize gap: one visible glyph + millions of invisible variation selectors saturates context, evicts the system prompt, amplifies cost, overflows logs — and evades short-window moderation by burying the real payload beyond the classifier window",
+        owasp=["LLM10"],
+        mitre_atlas=["AML.T0043"],
+    ),
+    "L1_AT_19": AttackTechnique(
+        id="L1_AT_19",
+        name="Length / Detail Coercion (Amplifier)",
+        layer="L1",
+        description="Cross-cutting force-multiplier stacked on any other technique: minimum size, anti-redaction clauses (\"no placeholders\"), banned disclaimers — padding pressure pushes past short safe-completion patterns toward operational specificity",
+        owasp=[],
+        mitre_atlas=[],
+    ),
+    "L1_AT_20": AttackTechnique(
+        id="L1_AT_20",
+        name="Stacked Composition (Meta-technique)",
+        layer="L1",
+        description="Compose multiple carriers (e.g. prefill + divider + length floor + persona) into one payload — \"99% blocked → 1% that leaks, at scale\". The evasion space is combinatorial, not artisanal",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051"],
     ),
 
     # ── L2: RAG Systems ──
@@ -284,6 +366,16 @@ TECHNIQUE_MAP: Final = {
     "L1_AT_08": {"owasp": "LLM01", "mitre": "AML.T0015"},
     "L1_AT_09": {"owasp": "LLM01", "mitre": "AML.T0069"},
     "L1_AT_10": {"owasp": "LLM01", "mitre": "AML.T0015"},
+    "L1_AT_11": {"owasp": "LLM01", "mitre": "AML.T0051"},
+    "L1_AT_12": {"owasp": "LLM01", "mitre": "AML.T0051"},
+    "L1_AT_13": {"owasp": "LLM01", "mitre": "AML.T0051"},
+    "L1_AT_14": {"owasp": "LLM01", "mitre": "AML.T0051"},
+    "L1_AT_15": {"owasp": "LLM08", "mitre": "AML.T0051"},
+    "L1_AT_16": {"owasp": "LLM01", "mitre": "AML.T0051"},
+    "L1_AT_17": {"owasp": "LLM01", "mitre": "AML.T0051"},
+    "L1_AT_18": {"owasp": "LLM10", "mitre": "AML.T0043"},
+    "L1_AT_19": {},
+    "L1_AT_20": {"owasp": "LLM01", "mitre": "AML.T0051"},
     "L2_AT_01": {"owasp": "LLM01", "mitre": "AML.T0051.001"},
     "L2_AT_02": {"owasp": "LLM04", "mitre": "AML.T0070"},
     "L2_AT_03": {"owasp": "LLM08", "mitre": "AML.T0064"},
@@ -291,3 +383,33 @@ TECHNIQUE_MAP: Final = {
     "L3_AT_02": {"owasp": "LLM01", "mitre": "AML.T0080"},
     "L3_AT_03": {"owasp": "LLM01", "mitre": "AML.T0053"},
 }
+
+# ── PIT alias layer (NOR-18) ─────────────────────────────────────────────────
+# Generated by scripts/import_pit.py from the Arcanum Prompt Injection
+# Taxonomy (CC BY 4.0). Maps each Norn technique to equivalent PIT codes
+# (PIT-T-* techniques / PIT-E-* evasions).
+
+_PIT_MAP_PATH = Path(__file__).parent / "pit_map.json"
+_PIT_MAP_CACHE: dict[str, list[str]] | None = None
+
+
+def _load_pit_map() -> dict[str, list[str]]:
+    """Load the PIT alias map once; empty dict if the file is missing."""
+    global _PIT_MAP_CACHE
+    if _PIT_MAP_CACHE is not None:
+        return _PIT_MAP_CACHE
+    try:
+        data = json.loads(_PIT_MAP_PATH.read_text(encoding="utf-8"))
+        _PIT_MAP_CACHE = data.get("map", {})
+    except (OSError, ValueError):
+        _PIT_MAP_CACHE = {}
+    return _PIT_MAP_CACHE
+
+
+def pit_aliases(technique_id: str) -> list[str]:
+    """Return the PIT codes equivalent to a Norn technique (NOR-18).
+
+    Empty list when the pit_map is absent — never raises, so the taxonomy
+    works without the alias layer.
+    """
+    return list(_load_pit_map().get(technique_id, []))
