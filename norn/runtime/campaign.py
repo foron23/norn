@@ -136,7 +136,17 @@ def _balance_cases(cases: list[CaseDescriptor], benign_ratio: float, seed: int |
 
 
 def plan_campaign(db: Database, config: CampaignConfig) -> int:
-    """Phase 1: Validate config, persist campaign, generate test cases."""
+    """Phase 1: Validate config, persist campaign, generate test cases.
+
+    NOR-25 (D1/D2): the effective verifier pipeline is resolved HERE and
+    persisted, so the run phase sees the same pipeline after the DB
+    round-trip (a full ``model_dump_json`` would otherwise mark defaulted
+    ``mode``/``vote_strategy`` as explicit and defeat D1/D2).
+    """
+    scoring = config.scoring
+    scoring.verifiers = scoring.effective_verifiers()
+    scoring.vote_strategy = scoring.effective_vote_strategy()
+
     repo = CampaignRepository(db)
     campaign_id = repo.insert_campaign(config)
 
@@ -287,7 +297,7 @@ def run_campaign(
     layer = campaign["layer"]
     replicas_per_case = config.replicas_per_case
     scoring_mode = config.scoring.mode.value
-    vote_strategy = config.scoring.vote_strategy.value
+    vote_strategy = config.scoring.effective_vote_strategy().value
 
     repo.update_state(campaign_id, CampaignState.RUNNING)
 
@@ -302,6 +312,7 @@ def run_campaign(
     scorer = build_scorer(
         scoring_mode,
         vote_strategy,
+        verifiers=config.scoring.verifiers,
         judge_provider=config.scoring.judge_provider,
         judge_model=config.scoring.judge_model,
         judge_sample_rate=config.scoring.judge_sample_rate,
