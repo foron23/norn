@@ -558,14 +558,14 @@ def show_taxonomy(
 
         techniques = [t for t in ATTACK_TECHNIQUES.values() if t.layer == layer_key]
         if show_pit:
-            ttable = Table("ID", "Name", "OWASP", "MITRE ATLAS", "PIT aliases")
+            ttable = Table("ID", "Name", "Description", "OWASP", "MITRE ATLAS", "PIT aliases")
             for t in techniques:
                 aliases = ", ".join(pit_aliases(t.id)) or "—"
-                ttable.add_row(t.id, t.name, ", ".join(t.owasp[:2]), ", ".join(t.mitre_atlas[:2]), aliases)
+                ttable.add_row(t.id, t.name, t.description, ", ".join(t.owasp[:2]), ", ".join(t.mitre_atlas[:2]), aliases)
         else:
-            ttable = Table("ID", "Name", "OWASP", "MITRE ATLAS")
+            ttable = Table("ID", "Name", "Description", "OWASP", "MITRE ATLAS")
             for t in techniques:
-                ttable.add_row(t.id, t.name, ", ".join(t.owasp[:2]), ", ".join(t.mitre_atlas[:2]))
+                ttable.add_row(t.id, t.name, t.description, ", ".join(t.owasp[:2]), ", ".join(t.mitre_atlas[:2]))
         console.print(ttable)
         console.print()
 
