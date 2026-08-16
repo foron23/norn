@@ -23,7 +23,12 @@ from rich.progress import (
 from rich.table import Table
 
 from norn.domain.models import CampaignConfig, CampaignState
-from norn.domain.taxonomy import ATTACK_TECHNIQUES, LAYER_CATALOG, METRIC_DEFINITIONS, pit_aliases
+from norn.domain.taxonomy import (
+    ATTACK_TECHNIQUES,
+    LAYER_CATALOG,
+    METRIC_DEFINITIONS,
+    pit_aliases,
+)
 from norn.metrics.cost import estimate_campaign_cost
 from norn.metrics.kccr import compute_chain_kccr
 from norn.persistence.database import (

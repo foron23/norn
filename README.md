@@ -338,6 +338,19 @@ Licensed under the **Apache License, Version 2.0**. See [`LICENSE`](LICENSE) and
   Information Security, licensed **CC BY 4.0**:
   https://github.com/Arcanum-Sec/arc_pi_taxonomy
 
+### PIT candidates mapped to L2/L3 (data-level, no code)
+
+The curated mapping in `scripts/import_pit.py` also documents PIT techniques
+that are natural variants of Norn's L2/L3 techniques. They are **not**
+implemented as separate probes yet — they are candidates for future corpus
+seeding (NOR-22 fixtures / L3 hardening):
+
+- `L3_AT_02` (agentic tool suite) ← `PIT-T-42` Tool-Definition Injection,
+  `PIT-T-43` Tool Rug Pull (TOCTOU), `PIT-T-45` Prompt Worm, `PIT-T-47`
+  Confused Deputy, `PIT-T-70` Function-Call Parameter Smuggling
+- `L2_AT_02` (indirect injection / RAG) ← `PIT-T-64` Retrieval Ranking
+  Manipulation
+
 ---
 
 **Version:** 0.1.0 · **Python:** 3.11+ · **Author:** Iker Foronda
