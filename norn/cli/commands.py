@@ -6,12 +6,16 @@ from __future__ import annotations
 
 import csv
 import json
+import re
+import time
+from collections import deque
 from pathlib import Path
 from typing import Annotated
 
 import typer
 import yaml
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.panel import Panel
 from rich.progress import (
     BarColumn,
@@ -21,8 +25,15 @@ from rich.progress import (
     TimeElapsedColumn,
 )
 from rich.table import Table
+from rich.text import Text
 
-from norn.domain.models import CampaignConfig, CampaignState
+from norn.domain.models import (
+    CampaignConfig,
+    CampaignState,
+    ReplicaDetail,
+    RunSummary,
+    ScoringDecision,
+)
 from norn.domain.taxonomy import (
     ATTACK_TECHNIQUES,
     LAYER_CATALOG,
@@ -176,10 +187,153 @@ def plan_campaign(
     console.print(f"[dim]Use 'norn run-campaign --campaign-id {campaign_id}' to execute[/dim]")
 
 
+# ── NOR-29: verbose live table helpers ───────────────────────────────────────
+_TRUNCATE = 140
+_HL_RE = re.compile(r"H\((\w+)=([\d.]+)\)\s+L\((\w+)=([\d.]+)\)")
+
+
+def _trunc(text: str, n: int = _TRUNCATE) -> str:
+    """Collapse whitespace and truncate to ``n`` chars for table cells."""
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
+def _status_style(status: str) -> str:
+    """Color by verdict: red = compromise (what the pipeline must catch)."""
+    return {
+        "completed_success": "red",
+        "blocked": "green",
+        "partial": "yellow",
+        "ambiguous": "yellow",
+    }.get(status, "white")
+
+
+def _hl_text(decision: ScoringDecision) -> str:
+    """Compact voter summary: hybrid reasoning (H(...) L(...)) or raw votes."""
+    r = (decision.reasoning or "").strip()
+    if r:
+        return _trunc(r, 44)
+    if decision.votes:
+        return " ".join(f"{vt}({sc:.2f})" for vt, sc in decision.votes)
+    return "-"
+
+
+def _anomalous(detail: ReplicaDetail) -> bool:
+    """Row is anomalous when voters disagree or acceptance != nominal status.
+
+    This is the live signal the heuristic is lying (H says success, the
+    judge L refutes it) — the exact case NOR-29 exists to surface early.
+    """
+    m = _HL_RE.search(detail.decision.reasoning or "")
+    if m and m.group(1) != m.group(3):
+        return True
+    nominal_ok = detail.decision.status.value == "completed_success"
+    return bool(detail.acceptance) != nominal_ok
+
+
+def _format_tool_calls(tool_calls: list[dict] | None) -> str:
+    if not tool_calls:
+        return "-"
+    parts = []
+    for tc in tool_calls:
+        name = tc.get("tool_name", "?")
+        params = tc.get("tool_params") or ""
+        if isinstance(params, dict):
+            params = ", ".join(f"{k}={v}" for k, v in list(params.items())[:3])
+        parts.append(f"{name}({_trunc(str(params), 60)})" if params else name)
+    return _trunc("; ".join(parts), 100)
+
+
+def _format_replica_row(detail: ReplicaDetail, verbose_level: int, idx: int) -> list[str]:
+    """One table row (already Rich-marked). -vv adds payload + L3 tool calls."""
+    d = detail
+    style = _status_style(d.decision.status.value)
+    row: list[str] = [
+        str(idx),
+        d.technique_id,
+        d.split or "-",
+        d.arm or "-",
+        f"[{style}]{d.decision.status.value}[/{style}]",
+        f"{d.decision.score_value:.2f}",
+        _hl_text(d.decision),
+        _trunc(d.response),
+    ]
+    if verbose_level >= 2:
+        row.insert(4, _trunc(d.payload))
+        row.append(_format_tool_calls(d.tool_calls))
+    return row
+
+
+def _run_campaign_verbose(
+    db: Database,
+    campaign_id: int,
+    total: int,
+    verbose_level: int,
+    console: Console,
+) -> RunSummary:
+    """NOR-29: run with a Rich Live table of the last 15 replicas (no bar).
+
+    The runtime is untouched: the same callbacks the normal bar uses, plus
+    the NOR-29 detail callback feeding the live table.
+    """
+    rows: deque[tuple[int, ReplicaDetail]] = deque(maxlen=15)
+    start = time.monotonic()
+    done = 0
+
+    def _view() -> Group:
+        elapsed = int(time.monotonic() - start)
+        pct = (done / total * 100) if total else 0.0
+        header = Text(
+            f"Campaign {campaign_id} · {done}/{total} réplicas · {pct:.0f}% · {elapsed}s",
+            style="bold cyan",
+        )
+        t = Table(show_header=True, header_style="bold")
+        t.add_column("#", justify="right", no_wrap=True)
+        t.add_column("técnica")
+        t.add_column("split")
+        t.add_column("arm")
+        if verbose_level >= 2:
+            t.add_column("payload")
+        t.add_column("status")
+        t.add_column("score", justify="right")
+        t.add_column("H/L")
+        t.add_column("respuesta")
+        if verbose_level >= 2:
+            t.add_column("tools")
+        for idx, d in rows:
+            t.add_row(*_format_replica_row(d, verbose_level, idx), style="bold" if _anomalous(d) else None)
+        return Group(header, Text(""), t)
+
+    with Live(_view(), console=console, refresh_per_second=8, transient=False) as live:
+        def on_progress(completed: int, total_val: int, technique_id: str, case_id: str) -> None:
+            nonlocal done
+            done = completed
+            live.update(_view())
+
+        def on_detail(detail: ReplicaDetail) -> None:
+            rows.append((done, detail))
+            live.update(_view())
+
+        return _run_campaign(
+            db, campaign_id,
+            progress_callback=on_progress,
+            detail_callback=on_detail,
+        )
+
+
 @app.command()
 def run_campaign(
     campaign_id: Annotated[int, typer.Option("--campaign-id", "-id", help="Campaign ID to run")],
     db_path: Annotated[str, typer.Option("--db", help="Database path")] = "norn.db",
+    verbose: Annotated[
+        int,
+        typer.Option(
+            "--verbose",
+            "-v",
+            count=True,
+            help="Live per-replica table during the run (-v); -vv also shows payload and L3 tool calls.",
+        ),
+    ] = 0,
 ):
     """Run (execute) all test cases of a planned campaign."""
     db = Database(db_path)
@@ -196,29 +350,32 @@ def run_campaign(
     test_cases = repo.get_test_cases(campaign_id)
     total = len(test_cases) * replicas_per_case
 
-    with Progress(
-        TextColumn(f"[bold cyan]Campaign {campaign_id}[/bold cyan]"),
-        TextColumn("{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("[dim]{task.fields[technique]}[/dim]"),
-        TimeElapsedColumn(),
-    ) as progress:
-        task_id = progress.add_task(
-            description=f"Replicas 0/{total}",
-            total=total,
-            technique="",
-        )
-
-        def on_progress(completed: int, total_val: int, technique_id: str, case_id: str):
-            progress.update(
-                task_id,
-                advance=1,
-                description=f"Replicas {completed}/{total_val}",
-                technique=f"technique: {technique_id}",
+    if verbose:
+        summary = _run_campaign_verbose(db, campaign_id, total, verbose, console)
+    else:
+        with Progress(
+            TextColumn(f"[bold cyan]Campaign {campaign_id}[/bold cyan]"),
+            TextColumn("{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("[dim]{task.fields[technique]}[/dim]"),
+            TimeElapsedColumn(),
+        ) as progress:
+            task_id = progress.add_task(
+                description=f"Replicas 0/{total}",
+                total=total,
+                technique="",
             )
 
-        summary = _run_campaign(db, campaign_id, progress_callback=on_progress)
+            def on_progress(completed: int, total_val: int, technique_id: str, case_id: str):
+                progress.update(
+                    task_id,
+                    advance=1,
+                    description=f"Replicas {completed}/{total_val}",
+                    technique=f"technique: {technique_id}",
+                )
+
+            summary = _run_campaign(db, campaign_id, progress_callback=on_progress)
 
     console.print(f"[green]Campaign {campaign_id} execution completed[/green]")
     table = Table("Metric", "Value")
