@@ -217,6 +217,11 @@ class CampaignConfig(pydantic.BaseModel):
     tools: list[str] = pydantic.Field(default_factory=list)
     tools_file: str | None = None
     arms: list[ArmConfig] | None = None
+    # NOR-20: assistant prefill (Output Prefill / Forced Affirmation, L1_AT_12).
+    # When set, the string is injected as an assistant message right after
+    # the user payload on the FIRST turn of L1_AT_12 cases only (D5) —
+    # the model continues from the prefilled opening token.
+    prefill: str | None = None
     export: ExportConfig = pydantic.Field(default_factory=ExportConfig)
 
     @pydantic.field_validator("benign_ratio")

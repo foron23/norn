@@ -87,6 +87,7 @@ class OllamaClient:
         model_config: ModelConfig,
         messages: list[dict],
         tools: list[dict] | None = None,
+        prefill: str | None = None,
     ) -> tuple[str, int, int, float, list[dict] | None, None]:
         """Send a multi-message chat request with optional tool schemas (NOR-01).
 
@@ -94,19 +95,29 @@ class OllamaClient:
         plus the tool schemas the model may call. ``chat()`` is kept intact
         for backward compatibility.
 
+        NOR-20: ``prefill`` (assistant prefill / forced affirmation) appends
+        an assistant message right after the user payload so the model
+        continues from the prefilled opening token. The runtime passes it
+        only on the first turn of L1_AT_12 cases (D5).
+
         Args:
             model_config: Model configuration.
             messages: Full message history (system/user/assistant/tool roles).
             tools: Optional list of tool schemas (OpenAI/Ollama format).
+            prefill: Optional assistant opening to inject after the last user.
 
         Returns:
             Same 6-tuple as :meth:`chat`.
         """
         seed = model_config.seed if model_config.seed is not None else 0
 
+        msgs = list(messages)
+        if prefill:
+            msgs.append({"role": "assistant", "content": prefill})
+
         body = {
             "model": model_config.model_name,
-            "messages": messages,
+            "messages": msgs,
             "stream": False,
             "keep_alive": "5m",
             "options": {

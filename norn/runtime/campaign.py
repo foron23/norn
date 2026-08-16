@@ -547,9 +547,21 @@ def _run_simple_replica(
             {"role": "user", "content": case.payload},
         ]
 
+    # NOR-20 (D5): prefill SOLO a casos de técnica L1_AT_12 y SOLO en el
+    # primer turno — medición aislada de la técnica; una campaña
+    # multi-técnica lo aplica únicamente a L1_AT_12 y no se repite.
+    prefill = config.prefill if (config.prefill and case.technique_id == "L1_AT_12") else None
+    # Sin system_prompt, el prefill obliga a usar chat_messages (necesitamos
+    # lista de mensajes para inyectar el assistant tras el user).
+    use_messages = messages is not None or prefill is not None
+
     for turn in range(max_turns):
-        if messages is not None:
-            result = client.chat_messages(model_config, messages)
+        if use_messages:
+            msgs = messages if messages is not None else [{"role": "user", "content": case.payload}]
+            result = client.chat_messages(
+                model_config, msgs,
+                prefill=(prefill if turn == 0 else None),
+            )
         else:
             result = client.chat(model_config, case.payload)
         response, tokens_in, tokens_out, latency_ms = result[:4]
@@ -623,6 +635,11 @@ def _run_agent_replica(
     if model_config.system_prompt:
         messages.append({"role": "system", "content": model_config.system_prompt})
     messages.append({"role": "user", "content": case.payload})
+    # NOR-20 (D5): prefill SOLO en casos L1_AT_12, inyectado como primer
+    # assistant message (el modelo continúa desde el opening prefilled).
+    # El historial acumulado lo mantiene en contexto en turnos siguientes.
+    if config.prefill and case.technique_id == "L1_AT_12":
+        messages.append({"role": "assistant", "content": config.prefill})
 
     tools = executor.schemas()
     all_tool_calls: list[dict] = []

@@ -38,7 +38,7 @@ class FakeClient:
         self.chat_calls += 1
         return (self.content, 10, 5, 3.0, None, None)
 
-    def chat_messages(self, model_config, messages, tools=None):
+    def chat_messages(self, model_config, messages, tools=None, prefill=None):
         self.chat_messages_calls.append(messages)
         return (self.content, 10, 5, 3.0, None, None)
 
