@@ -194,7 +194,10 @@ def test_new_variants_carry_source_and_date():
     assert len(seeded) >= 60, f"only {len(seeded)} variants carry source/date"
     for p in probes:
         for v in p.get("variants", []):
-            if v.get("source") and "NOR-16 seed" not in v.get("source", ""):
+            if v.get("source"):
+                # D1 (auditoría 2026-08-16): TODAS las variants con source
+                # llevan date, incluidas las de relleno de balance "NOR-16 seed"
+                # (antes exentas → loophole en el criterio de aceptación (c)).
                 assert v.get("date"), f"{p.get('technique_id')}:{v.get('variant_type')} missing date"
                 assert v.get("source"), f"{p.get('technique_id')}:{v.get('variant_type')} missing source"
 
