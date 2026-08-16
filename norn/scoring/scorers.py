@@ -18,6 +18,7 @@ from norn.scoring.rules import (
     load_refusal_config,
     load_tool_rules,
 )
+from norn.scoring.signals import classify_technique
 
 
 class ScorerProtocol(Protocol):
@@ -839,12 +840,57 @@ class HybridScorer(EnsembleScorer):
         self.llm_judge = self.voters[1]
 
 
+class SignalScorer:
+    """Signal-based heuristic for L1 (NOR-27) — no per-technique mega-regex.
+
+    L1 responses are classified by ``signals.classify_technique`` (refusal /
+    compliance / goal signals combined with an anaphoric window). L2/L3 keep
+    the exact legacy paths (per-technique patterns + YAML tool rules) via an
+    internal :class:`HeuristicScorer`, so the signals refactor only touches
+    the problem area (L1 Pliny techniques) with zero parity risk elsewhere.
+    """
+
+    name = "heuristic_signals"
+
+    def __init__(
+        self,
+        custom_rules: dict[str, dict[str, list[str]]] | None = None,
+        rules_file: str | None = None,
+    ):
+        self._l2_l3 = HeuristicScorer(custom_rules, rules_file=rules_file)
+
+    def supports_technique(self, technique_id: str) -> bool:
+        return self._l2_l3.supports_technique(technique_id)
+
+    def score_response(
+        self, prompt: str, response: str, technique_id: str, layer: str,
+        context: list[dict[str, str]] | None = None,
+        split: str | None = None,
+        replica_id: int | None = None,
+    ) -> ScoringDecision:
+        if layer == "L1":
+            status, score, reasoning = classify_technique(
+                response, technique_id, self._l2_l3.refusal_config
+            )
+            return ScoringDecision(
+                score_value=score,
+                status=status,
+                technique_id=technique_id,
+                layer=layer,
+                mode=ScoringMode.HEURISTIC,
+                reasoning=reasoning,
+            )
+        return self._l2_l3.score_response(
+            prompt, response, technique_id, layer, context=context,
+            split=split, replica_id=replica_id,
+        )
+
+
 # NOR-25: pluggable verifier registry. Keys must stay in sync with
 # ScoringConfig.KNOWN_VERIFIERS (guardrail: test_verifiers_registry_matches_model).
-# NOR-27 swaps ``heuristic_signals`` from the placeholder to SignalScorer.
 _VERIFIER_REGISTRY: dict[str, type] = {
     "heuristic_legacy": HeuristicScorer,
-    "heuristic_signals": HeuristicScorer,  # placeholder — SignalScorer in NOR-27
+    "heuristic_signals": SignalScorer,
     "judge": LLMJudgeScorer,
 }
 
@@ -860,17 +906,12 @@ def _build_verifier(
     *,
     custom_rules: dict | None,
     rules_file: str | None,
-    judge: LLMJudgeScorer | None,
 ) -> object:
     cls = _VERIFIER_REGISTRY.get(name)
     if cls is None:
         raise ValueError(
             f"Unknown verifier {name!r} — known: {', '.join(sorted(_VERIFIER_REGISTRY))}"
         )
-    if cls is LLMJudgeScorer:
-        if judge is None:
-            raise ValueError("verifier 'judge' requires judge configuration")
-        return judge
     return cls(custom_rules=custom_rules, rules_file=rules_file)
 
 
@@ -911,6 +952,16 @@ def build_scorer(
     """
     names = list(verifiers) if verifiers is not None else _MODE_TO_VERIFIERS.get(mode, ["heuristic_legacy"])
 
+    # Build the non-judge voters first: the judge's internal fallback (used
+    # when no judge_model is configured or the judge is down) must be the
+    # ensemble's own heuristic — otherwise the no-provider "judge" voter
+    # would echo a bare legacy HeuristicScorer and shadow a signals pipeline
+    # under judge_arbiter (NOR-27).
+    heuristic_voters = [
+        _build_verifier(name, custom_rules=custom_rules, rules_file=rules_file)
+        for name in names if name != "judge"
+    ]
+
     judge = None
     if "judge" in names:
         judge_config = ModelConfig(
@@ -922,13 +973,11 @@ def build_scorer(
             provider=build_provider(judge_provider) if judge_model else None,
             model_config=judge_config if judge_model else None,
             sample_rate=judge_sample_rate,
+            fallback=heuristic_voters[0] if heuristic_voters else HeuristicScorer(custom_rules, rules_file=rules_file),
             judge_recorder=judge_recorder,
         )
 
-    voters = [
-        _build_verifier(name, custom_rules=custom_rules, rules_file=rules_file, judge=judge)
-        for name in names
-    ]
+    voters = list(heuristic_voters) + ([judge] if judge is not None else [])
     if len(voters) == 1:
         return voters[0]
     if names == ["heuristic_legacy", "judge"]:
