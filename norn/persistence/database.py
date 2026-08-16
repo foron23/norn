@@ -227,18 +227,20 @@ class CampaignRepository(BaseRepository):
 
     def insert_turn_event(self, replica_id: int, turn: int, prompt: str, response: str,
                           tokens_in: int = 0, tokens_out: int = 0, latency_ms: float = 0.0,
-                          role: str = "user") -> int:
+                          role: str = "user", model: str | None = None) -> int:
         """Insert a turn event.
 
         ``role`` defaults to ``user`` for the audited model's turns; the
         LLM judge records its calls with ``role='judge'`` (NOR-07) so cost
         estimation can split model vs judge tokens and conversation exports
-        can filter judge verdicts out.
+        can filter judge verdicts out. ``model`` (NOR-19) names the judge
+        model that produced the call so multi-model ensembles keep
+        per-model cost attribution.
         """
         cur = self.conn.execute(
-            "INSERT INTO turn_event (replica_id, turn, prompt, response, role, tokens_in, tokens_out, latency_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (replica_id, turn, prompt, response, role, tokens_in, tokens_out, latency_ms),
+            "INSERT INTO turn_event (replica_id, turn, prompt, response, role, tokens_in, tokens_out, latency_ms, model) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (replica_id, turn, prompt, response, role, tokens_in, tokens_out, latency_ms, model),
         )
         self.conn.commit()
         return cur.lastrowid
@@ -572,9 +574,9 @@ class CostRepository(BaseRepository):
         return [dict(r) for r in rows]
 
     def get_turn_tokens(self, campaign_id: int) -> list[dict[str, Any]]:
-        """Token usage per turn event of a campaign (with role)."""
+        """Token usage per turn event of a campaign (with role and model)."""
         rows = self.conn.execute(
-            "SELECT te.role, te.tokens_in, te.tokens_out "
+            "SELECT te.role, te.tokens_in, te.tokens_out, te.model "
             "FROM turn_event te "
             "JOIN run_replica rr ON te.replica_id = rr.id "
             "WHERE rr.campaign_id = ?",

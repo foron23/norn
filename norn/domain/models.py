@@ -89,6 +89,10 @@ class ScoringConfig(pydantic.BaseModel):
     rules_file: str | None = None
     judge_provider: str = "openai"
     judge_model: str | None = None
+    # NOR-19: N judge models (judge ensemble). When set (non-empty), it wins
+    # over the single `judge_model` and each model is called in parallel
+    # (max 3 concurrent, D4) with the ensemble combining the verdicts.
+    judge_models: list[str] | None = None
     judge_sample_rate: float = 1.0
     vote_strategy: VoteStrategy = VoteStrategy.MAJORITY
     # NOR-25: pluggable verifier pipeline. When set it wins over `mode`;

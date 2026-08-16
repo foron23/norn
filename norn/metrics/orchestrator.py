@@ -149,7 +149,13 @@ class MetricsOrchestrator:
                 threshold = 0.5
             compromise_map: dict[int, float] = {}
             for vote in self.scoring_repo.get_votes(campaign_id, arm=arm):
-                if vote.get("voter_type") == "llm_judge":
+                # FIX (NOR-19): el ensemble persiste el voto del judge como
+                # ("judge", score) — el filtro original "llm_judge" dejaba el
+                # compromise_map vacío en hybrid → FAR/FRR 0.0 "sin ground
+                # truth" aunque el judge votara. Aceptar ambos nombres (el
+                # voto individual legacy y el del ensemble). Los votos por
+                # modelo ("llm_judge:<model>") NO alimentan el ground truth.
+                if vote.get("voter_type") in ("llm_judge", "judge"):
                     compromise_map[vote["replica_id"]] = float(vote["vote"])
             far, frr = compute_far_frr(observations, compromise_map, threshold=threshold)
             results.append(far)

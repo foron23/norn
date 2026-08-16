@@ -301,12 +301,17 @@ def run_campaign(
 
     repo.update_state(campaign_id, CampaignState.RUNNING)
 
-    def _record_judge_call(replica_id, prompt, response, tokens_in, tokens_out, latency_ms):
-        """NOR-07: persist judge LLM calls as turn_event rows (role='judge')."""
+    def _record_judge_call(replica_id, prompt, response, tokens_in, tokens_out, latency_ms,
+                           model_name: str | None = None):
+        """NOR-07: persist judge LLM calls as turn_event rows (role='judge').
+
+        NOR-19: ``model_name`` (judge ensemble) names the judge model so
+        cost estimation attributes per-model prices.
+        """
         repo.insert_turn_event(
             replica_id=replica_id, turn=-1, prompt=prompt, response=response,
             tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms,
-            role="judge",
+            role="judge", model=model_name,
         )
 
     scorer = build_scorer(
@@ -315,6 +320,7 @@ def run_campaign(
         verifiers=config.scoring.verifiers,
         judge_provider=config.scoring.judge_provider,
         judge_model=config.scoring.judge_model,
+        judge_models=config.scoring.judge_models,
         judge_sample_rate=config.scoring.judge_sample_rate,
         judge_api_key=base_model_config.api_key,
         rules_file=config.scoring.rules_file,
