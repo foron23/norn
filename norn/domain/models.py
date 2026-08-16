@@ -49,6 +49,12 @@ class VoteStrategy(str, Enum):
     MAJORITY = "majority"
     WEIGHTED_AVG = "weighted_avg"
     VETO = "veto"
+    JUDGE_ARBITER = "judge_arbiter"  # NOR-26: the judge decides discrepancies
+
+
+# NOR-25: canonical names of the pluggable verifier pipeline. Keep in sync
+# with norn.scoring.scorers._VERIFIER_REGISTRY (guardrail test enforces it).
+KNOWN_VERIFIERS: tuple[str, ...] = ("heuristic_legacy", "heuristic_signals", "judge")
 
 
 # ── Pydantic Configs ─────────────────────────────────────────────────────────
@@ -85,6 +91,10 @@ class ScoringConfig(pydantic.BaseModel):
     judge_model: str | None = None
     judge_sample_rate: float = 1.0
     vote_strategy: VoteStrategy = VoteStrategy.MAJORITY
+    # NOR-25: pluggable verifier pipeline. When set it wins over `mode`;
+    # when None the pipeline is resolved from `mode` (legacy API) or the
+    # new default (D2) — see effective_verifiers()/effective_vote_strategy().
+    verifiers: list[str] | None = None
     acceptance_threshold: float = 0.5
 
     @pydantic.field_validator("judge_sample_rate")
@@ -93,6 +103,47 @@ class ScoringConfig(pydantic.BaseModel):
         if not 0.0 <= v <= 1.0:
             raise ValueError("judge_sample_rate must be in [0.0, 1.0]")
         return v
+
+    @pydantic.field_validator("verifiers")
+    @classmethod
+    def _validate_verifiers(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return v
+        unknown = [name for name in v if name not in KNOWN_VERIFIERS]
+        if unknown:
+            raise ValueError(
+                f"Unknown verifier(s): {', '.join(unknown)} — "
+                f"known: {', '.join(KNOWN_VERIFIERS)}"
+            )
+        return v
+
+    def effective_verifiers(self) -> list[str]:
+        """Resolve the verifier pipeline that will actually run (NOR-25).
+
+        - explicit ``verifiers`` wins;
+        - explicit legacy ``mode`` keeps its exact verifier (heuristic →
+          ``heuristic_legacy``, llm_judge → ``judge``, hybrid →
+          ``heuristic_legacy`` + ``judge``);
+        - otherwise (no ``mode`` in the YAML) → ``heuristic_signals`` +
+          ``judge`` (D2, 2026-08-16: signals by default on new configs).
+        """
+        if self.verifiers is not None:
+            return list(self.verifiers)
+        if "mode" in self.model_fields_set:
+            return {
+                ScoringMode.HEURISTIC: ["heuristic_legacy"],
+                ScoringMode.LLM_JUDGE: ["judge"],
+                ScoringMode.HYBRID: ["heuristic_legacy", "judge"],
+            }[self.mode]
+        return ["heuristic_signals", "judge"]
+
+    def effective_vote_strategy(self) -> VoteStrategy:
+        """D1 (2026-08-16, "respuesta honesta siempre"): the judge arbitrates
+        discrepancies by default so the nominal status stops lying. An
+        explicit ``vote_strategy`` in the config always wins."""
+        if "vote_strategy" in self.model_fields_set:
+            return self.vote_strategy
+        return VoteStrategy.JUDGE_ARBITER
 
 
 class ExportConfig(pydantic.BaseModel):

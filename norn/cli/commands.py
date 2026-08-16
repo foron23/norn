@@ -143,6 +143,8 @@ def validate_config(
         table.add_row("Layer", config.layer)
         table.add_row("Model", config.model.model_name)
         table.add_row("Scoring Mode", config.scoring.mode.value)
+        table.add_row("Verifiers", ", ".join(config.scoring.effective_verifiers()))
+        table.add_row("Vote strategy", config.scoring.effective_vote_strategy().value)
         table.add_row("Replicas per case", str(config.replicas_per_case))
         table.add_row("Techniques", ", ".join(config.techniques) if config.techniques else "all")
         table.add_row("Arms", str(len(config.arms)) if config.arms else "none")
