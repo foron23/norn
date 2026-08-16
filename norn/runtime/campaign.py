@@ -346,7 +346,11 @@ def run_campaign(
 
     # NOR-08: arms — each arm runs the full battery with its own replicas.
     arms = config.arms if config.arms else [None]  # None = legacy single arm
-    total_expected = len(test_cases) * replicas_per_case * len(arms)
+    # NOR-21 (D6): temperature sweep — each temperature runs its own replica
+    # group, INDEPENDENT of arms (combinable: arms × temps), reporting
+    # dedicated per temperature (scope temp:<v>).
+    temps = config.temperature_sweep if config.temperature_sweep else [None]
+    total_expected = len(test_cases) * replicas_per_case * len(arms) * len(temps)
 
     total_replicas = 0
     failed = 0
@@ -366,11 +370,15 @@ def run_campaign(
             overrides["system_prompt"] = arm.system_prompt
         return base_model_config.model_copy(update=overrides)
 
-    def _run_replica_batch(arm) -> None:
-        """Execute every test case × replica for one arm (or the legacy None)."""
+    def _run_replica_batch(arm, temp: float | None = None) -> None:
+        """Execute every test case × replica for one arm × temperature."""
         nonlocal total_replicas, failed
         arm_name = arm.name if arm is not None else None
         model_config = _resolve_arm_model(arm)
+        # NOR-21 (D6): temperature sweep overrides the resolved temperature
+        # (arm model / base config) so each temp group is a real measurement.
+        if temp is not None:
+            model_config = model_config.model_copy(update={"temperature": temp})
 
         for case_dict in test_cases:
             case = CaseDescriptor(
@@ -480,7 +488,8 @@ def run_campaign(
                     failed += 1
 
     for arm in arms:
-        _run_replica_batch(arm)
+        for temp in temps:
+            _run_replica_batch(arm, temp)
 
     if failed > 0:
         from collections import Counter
@@ -499,11 +508,15 @@ def run_campaign(
     repo.update_state(campaign_id, CampaignState.COMPLETED)
 
     orchestrator = MetricsOrchestrator(db)
-    # NOR-08: per-arm metrics first (scope_type=arm:<name>), then the global
-    # aggregate (all replicas, scope_type=campaign).
+    # NOR-08: per-arm metrics first (scope_type=arm:<name>), then per-temp
+    # (NOR-21, scope_type=temp:<v> — independent of arms, D6), then the
+    # global aggregate (all replicas, scope_type=campaign).
     if config.arms:
         for arm in config.arms:
             orchestrator.compute_all(campaign_id, arm=arm.name)
+    if config.temperature_sweep:
+        for temp in config.temperature_sweep:
+            orchestrator.compute_all(campaign_id, temperature=temp)
     metric_results = orchestrator.compute_all(campaign_id)
 
     return RunSummary(

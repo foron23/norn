@@ -222,6 +222,11 @@ class CampaignConfig(pydantic.BaseModel):
     # the user payload on the FIRST turn of L1_AT_12 cases only (D5) —
     # the model continues from the prefilled opening token.
     prefill: str | None = None
+    # NOR-21: temperature sweep (AutoTemp) — when set, each temperature runs
+    # its own replica group (same battery as arms NOR-08) and metrics are
+    # reported per temperature (scope temp:<v>). run_replica.temperature
+    # already exists (NOR-08) — no schema change.
+    temperature_sweep: list[float] | None = None
     export: ExportConfig = pydantic.Field(default_factory=ExportConfig)
 
     @pydantic.field_validator("benign_ratio")

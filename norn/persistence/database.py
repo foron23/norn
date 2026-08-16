@@ -166,6 +166,25 @@ class BaseRepository:
         return self.db.conn or self.db.connect()
 
 
+def _scope_clause(arm: str | None, temperature: float | None) -> tuple[str, list]:
+    """Build (SQL fragment, params) for arm/temperature scope filters.
+
+    NOR-08 arms and NOR-21 temperature sweeps share the same per-replica
+    filtering pattern (run_replica joined as ``rr``). Both filters can be
+    combined (arms × temps) — the caller decides which scopes to compute.
+    """
+    clauses: list[str] = []
+    params: list = []
+    if arm is not None:
+        clauses.append("rr.arm = ?")
+        params.append(arm)
+    if temperature is not None:
+        clauses.append("rr.temperature = ?")
+        params.append(temperature)
+    suffix = (" AND " + " AND ".join(clauses)) if clauses else ""
+    return suffix, params
+
+
 class CampaignRepository(BaseRepository):
     """Repository for campaign, test cases, replicas, and results."""
 
@@ -255,16 +274,13 @@ class CampaignRepository(BaseRepository):
         self.conn.commit()
         return cur.lastrowid
 
-    def get_replicas(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
-        if arm is not None:
-            rows = self.conn.execute(
-                "SELECT * FROM run_replica WHERE campaign_id = ? AND arm = ? ORDER BY id",
-                (campaign_id, arm),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT * FROM run_replica WHERE campaign_id = ? ORDER BY id", (campaign_id,)
-            ).fetchall()
+    def get_replicas(self, campaign_id: int, arm: str | None = None,
+                     temperature: float | None = None) -> list[dict[str, Any]]:
+        suffix, params = _scope_clause(arm, temperature)
+        rows = self.conn.execute(
+            f"SELECT rr.* FROM run_replica rr WHERE rr.campaign_id = ?{suffix} ORDER BY rr.id",
+            [campaign_id, *params],
+        ).fetchall()
         return [dict(r) for r in rows]
 
     def get_test_cases(self, campaign_id: int) -> list[dict[str, Any]]:
@@ -279,20 +295,15 @@ class CampaignRepository(BaseRepository):
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_tool_calls(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
-        if arm is not None:
-            rows = self.conn.execute(
-                "SELECT tce.* FROM tool_call_event tce "
-                "JOIN run_replica rr ON tce.replica_id = rr.id "
-                "WHERE rr.campaign_id = ? AND rr.arm = ? ORDER BY tce.id",
-                (campaign_id, arm),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT tce.* FROM tool_call_event tce "
-                "JOIN run_replica rr ON tce.replica_id = rr.id "
-                "WHERE rr.campaign_id = ? ORDER BY tce.id", (campaign_id,)
-            ).fetchall()
+    def get_tool_calls(self, campaign_id: int, arm: str | None = None,
+                       temperature: float | None = None) -> list[dict[str, Any]]:
+        suffix, params = _scope_clause(arm, temperature)
+        rows = self.conn.execute(
+            "SELECT tce.* FROM tool_call_event tce "
+            "JOIN run_replica rr ON tce.replica_id = rr.id "
+            f"WHERE rr.campaign_id = ?{suffix} ORDER BY tce.id",
+            [campaign_id, *params],
+        ).fetchall()
         return [dict(r) for r in rows]
 
     def insert_retrieval_event(self, replica_id: int, poisoned: bool,
@@ -305,20 +316,15 @@ class CampaignRepository(BaseRepository):
         self.conn.commit()
         return cur.lastrowid
 
-    def get_retrieval_events(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
-        if arm is not None:
-            rows = self.conn.execute(
-                "SELECT re.* FROM retrieval_event re "
-                "JOIN run_replica rr ON re.replica_id = rr.id "
-                "WHERE rr.campaign_id = ? AND rr.arm = ? ORDER BY re.id",
-                (campaign_id, arm),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT re.* FROM retrieval_event re "
-                "JOIN run_replica rr ON re.replica_id = rr.id "
-                "WHERE rr.campaign_id = ? ORDER BY re.id", (campaign_id,)
-            ).fetchall()
+    def get_retrieval_events(self, campaign_id: int, arm: str | None = None,
+                             temperature: float | None = None) -> list[dict[str, Any]]:
+        suffix, params = _scope_clause(arm, temperature)
+        rows = self.conn.execute(
+            "SELECT re.* FROM retrieval_event re "
+            "JOIN run_replica rr ON re.replica_id = rr.id "
+            f"WHERE rr.campaign_id = ?{suffix} ORDER BY re.id",
+            [campaign_id, *params],
+        ).fetchall()
         return [dict(r) for r in rows]
 
 
@@ -336,32 +342,25 @@ class MetricsRepository(BaseRepository):
         return cur.lastrowid
 
     def get_observations(self, campaign_id: int, metric_id: str | None = None,
-                         arm: str | None = None) -> list[dict[str, Any]]:
-        """Return per-replica observations, optionally filtered by arm (NOR-08)."""
-        if arm is not None:
-            if metric_id:
-                rows = self.conn.execute(
-                    "SELECT mo.* FROM metric_observation mo "
-                    "JOIN run_replica rr ON mo.replica_id = rr.id "
-                    "WHERE rr.campaign_id = ? AND mo.metric_id = ? AND rr.arm = ? "
-                    "AND mo.replica_id IS NOT NULL",
-                    (campaign_id, metric_id, arm),
-                ).fetchall()
-            else:
-                rows = self.conn.execute(
-                    "SELECT mo.* FROM metric_observation mo "
-                    "JOIN run_replica rr ON mo.replica_id = rr.id "
-                    "WHERE rr.campaign_id = ? AND rr.arm = ? AND mo.replica_id IS NOT NULL",
-                    (campaign_id, arm),
-                ).fetchall()
-        elif metric_id:
+                         arm: str | None = None,
+                         temperature: float | None = None) -> list[dict[str, Any]]:
+        """Return per-replica observations, optionally filtered by arm (NOR-08)
+        or temperature (NOR-21)."""
+        suffix, params = _scope_clause(arm, temperature)
+        if metric_id:
             rows = self.conn.execute(
-                "SELECT * FROM metric_observation WHERE campaign_id = ? AND metric_id = ? AND replica_id IS NOT NULL",
-                (campaign_id, metric_id),
+                "SELECT mo.* FROM metric_observation mo "
+                "JOIN run_replica rr ON mo.replica_id = rr.id "
+                f"WHERE rr.campaign_id = ? AND mo.metric_id = ?{suffix} "
+                "AND mo.replica_id IS NOT NULL",
+                [campaign_id, metric_id, *params],
             ).fetchall()
         else:
             rows = self.conn.execute(
-                "SELECT * FROM metric_observation WHERE campaign_id = ? AND replica_id IS NOT NULL", (campaign_id,)
+                "SELECT mo.* FROM metric_observation mo "
+                "JOIN run_replica rr ON mo.replica_id = rr.id "
+                f"WHERE rr.campaign_id = ?{suffix} AND mo.replica_id IS NOT NULL",
+                [campaign_id, *params],
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -417,46 +416,35 @@ class ScoringRepository(BaseRepository):
         self.conn.commit()
         return cur.lastrowid
 
-    def get_decisions(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
-        if arm is not None:
-            rows = self.conn.execute(
-                "SELECT sd.* FROM scoring_decision sd "
-                "JOIN run_replica rr ON sd.replica_id = rr.id "
-                "WHERE rr.campaign_id = ? AND rr.arm = ? ORDER BY sd.id",
-                (campaign_id, arm),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT sd.* FROM scoring_decision sd "
-                "JOIN run_replica rr ON sd.replica_id = rr.id "
-                "WHERE rr.campaign_id = ? ORDER BY sd.id", (campaign_id,)
-            ).fetchall()
+    def get_decisions(self, campaign_id: int, arm: str | None = None,
+                      temperature: float | None = None) -> list[dict[str, Any]]:
+        suffix, params = _scope_clause(arm, temperature)
+        rows = self.conn.execute(
+            "SELECT sd.* FROM scoring_decision sd "
+            "JOIN run_replica rr ON sd.replica_id = rr.id "
+            f"WHERE rr.campaign_id = ?{suffix} ORDER BY sd.id",
+            [campaign_id, *params],
+        ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_votes(self, campaign_id: int, arm: str | None = None) -> list[dict[str, Any]]:
+    def get_votes(self, campaign_id: int, arm: str | None = None,
+                  temperature: float | None = None) -> list[dict[str, Any]]:
         """Return scoring votes per replica for a campaign.
 
         Each row: {replica_id, voter_type, vote, reasoning}. Used by the
         metrics orchestrator to recover the judge's individual verdict
-        (compromise ground truth) for FAR/FRR. Optionally filtered by arm.
+        (compromise ground truth) for FAR/FRR. Optionally filtered by arm
+        (NOR-08) or temperature (NOR-21).
         """
-        if arm is not None:
-            rows = self.conn.execute(
-                "SELECT rr.id AS replica_id, sv.voter_type, sv.vote, sv.reasoning "
-                "FROM scoring_vote sv "
-                "JOIN scoring_decision sd ON sv.decision_id = sd.id "
-                "JOIN run_replica rr ON sd.replica_id = rr.id "
-                "WHERE rr.campaign_id = ? AND rr.arm = ? ORDER BY sv.id",
-                (campaign_id, arm),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                "SELECT rr.id AS replica_id, sv.voter_type, sv.vote, sv.reasoning "
-                "FROM scoring_vote sv "
-                "JOIN scoring_decision sd ON sv.decision_id = sd.id "
-                "JOIN run_replica rr ON sd.replica_id = rr.id "
-                "WHERE rr.campaign_id = ? ORDER BY sv.id", (campaign_id,)
-            ).fetchall()
+        suffix, params = _scope_clause(arm, temperature)
+        rows = self.conn.execute(
+            "SELECT rr.id AS replica_id, sv.voter_type, sv.vote, sv.reasoning "
+            "FROM scoring_vote sv "
+            "JOIN scoring_decision sd ON sv.decision_id = sd.id "
+            "JOIN run_replica rr ON sd.replica_id = rr.id "
+            f"WHERE rr.campaign_id = ?{suffix} ORDER BY sv.id",
+            [campaign_id, *params],
+        ).fetchall()
         return [dict(r) for r in rows]
 
 

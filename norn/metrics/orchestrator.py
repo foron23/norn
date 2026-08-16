@@ -35,8 +35,9 @@ class MetricsOrchestrator:
         self.kill_chain_repo = KillChainRepository(db)
         self._calculators: dict[str, list] = {}
 
-    def _get_observations(self, campaign_id: int, arm: str | None = None) -> list[dict]:
-        return self.metrics_repo.get_observations(campaign_id, arm=arm)
+    def _get_observations(self, campaign_id: int, arm: str | None = None,
+                          temperature: float | None = None) -> list[dict]:
+        return self.metrics_repo.get_observations(campaign_id, arm=arm, temperature=temperature)
 
     def _extract_per_replica_values(
         self, observations: list[dict], result: MetricResult, layer: str
@@ -81,16 +82,23 @@ class MetricsOrchestrator:
         # TTC, TDS and unknown — fall back to result.value
         return [result.value]
 
-    def compute_all(self, campaign_id: int, arm: str | None = None) -> list[MetricResult]:
+    def compute_all(self, campaign_id: int, arm: str | None = None,
+                    temperature: float | None = None) -> list[MetricResult]:
         """Run all metric calculations and store results.
 
         Args:
             campaign_id: Campaign to analyze.
             arm: When set, only replicas belonging to that arm (NOR-08)
                 are considered and aggregates are stored with
-                scope_type ``arm:<name>``. Kill-chain rows are only written
-                for the campaign-wide pass (arm=None) — they are per-case,
-                not per-arm.
+                scope_type ``arm:<name>``.
+            temperature: When set, only replicas run at that temperature
+                (NOR-21 temperature sweep, D6) are considered and
+                aggregates are stored with scope_type ``temp:<v>``.
+                Independent of ``arm`` — both scopes can coexist (arms ×
+                temps) plus the campaign-wide pass (both None).
+                Kill-chain rows are only written for the campaign-wide pass
+                (arm=None and temperature=None) — they are per-case, not
+                per-scope.
 
         Returns:
             The computed :class:`MetricResult` list for the requested scope.
@@ -100,18 +108,23 @@ class MetricsOrchestrator:
             return []
 
         layer = campaign["layer"]
-        observations = self._get_observations(campaign_id, arm=arm)
-        decisions = self.scoring_repo.get_decisions(campaign_id, arm=arm)
-        tool_calls = self.campaign_repo.get_tool_calls(campaign_id, arm=arm)
-        replicas = self.campaign_repo.get_replicas(campaign_id, arm=arm)
-        retrieval_events = self.campaign_repo.get_retrieval_events(campaign_id, arm=arm)
+        observations = self._get_observations(campaign_id, arm=arm, temperature=temperature)
+        decisions = self.scoring_repo.get_decisions(campaign_id, arm=arm, temperature=temperature)
+        tool_calls = self.campaign_repo.get_tool_calls(campaign_id, arm=arm, temperature=temperature)
+        replicas = self.campaign_repo.get_replicas(campaign_id, arm=arm, temperature=temperature)
+        retrieval_events = self.campaign_repo.get_retrieval_events(campaign_id, arm=arm, temperature=temperature)
 
         results: list[MetricResult] = []
 
         if not observations:
             return results
 
-        scope_type = f"arm:{arm}" if arm is not None else "campaign"
+        if temperature is not None:
+            scope_type = f"temp:{temperature}"
+        elif arm is not None:
+            scope_type = f"arm:{arm}"
+        else:
+            scope_type = "campaign"
 
         # ── L1 metrics ──
         if layer == "L1":
@@ -169,7 +182,7 @@ class MetricsOrchestrator:
             ttc = compute_ttc(all_turn_events, decisions)
             results.append(ttc)
 
-            if arm is None:
+            if arm is None and temperature is None:
                 for r in results:
                     metric_id = METRIC_NAME_TO_ID.get(r.name, f"{layer}_ME_01")
                     self.metrics_repo.insert_observation(
@@ -198,7 +211,7 @@ class MetricsOrchestrator:
             tds = compute_tds(retrieval_events, all_turn_events)
             results.append(tds)
 
-            if arm is None:
+            if arm is None and temperature is None:
                 for r in results:
                     metric_id = METRIC_NAME_TO_ID.get(r.name, f"{layer}_ME_01")
                     self.metrics_repo.insert_observation(
@@ -218,7 +231,7 @@ class MetricsOrchestrator:
             kccr = compute_kccr(decisions)
             results.append(kccr)
 
-            if arm is None:
+            if arm is None and temperature is None:
                 for r in results:
                     metric_id = METRIC_NAME_TO_ID.get(r.name, f"{layer}_ME_01")
                     self.metrics_repo.insert_observation(
@@ -257,7 +270,7 @@ class MetricsOrchestrator:
                 self._store_aggregate(campaign_id, r, vals, scope_type=scope_type)
 
         # ── Kill chain (campaign-wide only, per-case data) ──
-        if arm is None:
+        if arm is None and temperature is None:
             self._compute_kill_chains(campaign_id, decisions, replicas)
 
         return results
