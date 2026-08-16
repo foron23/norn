@@ -89,6 +89,10 @@ class ScoringConfig(pydantic.BaseModel):
     rules_file: str | None = None
     judge_provider: str = "openai"
     judge_model: str | None = None
+    # NOR-19: N judge models (judge ensemble). When set (non-empty), it wins
+    # over the single `judge_model` and each model is called in parallel
+    # (max 3 concurrent, D4) with the ensemble combining the verdicts.
+    judge_models: list[str] | None = None
     judge_sample_rate: float = 1.0
     vote_strategy: VoteStrategy = VoteStrategy.MAJORITY
     # NOR-25: pluggable verifier pipeline. When set it wins over `mode`;
@@ -213,6 +217,16 @@ class CampaignConfig(pydantic.BaseModel):
     tools: list[str] = pydantic.Field(default_factory=list)
     tools_file: str | None = None
     arms: list[ArmConfig] | None = None
+    # NOR-20: assistant prefill (Output Prefill / Forced Affirmation, L1_AT_12).
+    # When set, the string is injected as an assistant message right after
+    # the user payload on the FIRST turn of L1_AT_12 cases only (D5) —
+    # the model continues from the prefilled opening token.
+    prefill: str | None = None
+    # NOR-21: temperature sweep (AutoTemp) — when set, each temperature runs
+    # its own replica group (same battery as arms NOR-08) and metrics are
+    # reported per temperature (scope temp:<v>). run_replica.temperature
+    # already exists (NOR-08) — no schema change.
+    temperature_sweep: list[float] | None = None
     export: ExportConfig = pydantic.Field(default_factory=ExportConfig)
 
     @pydantic.field_validator("benign_ratio")

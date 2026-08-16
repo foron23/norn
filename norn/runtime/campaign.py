@@ -301,12 +301,17 @@ def run_campaign(
 
     repo.update_state(campaign_id, CampaignState.RUNNING)
 
-    def _record_judge_call(replica_id, prompt, response, tokens_in, tokens_out, latency_ms):
-        """NOR-07: persist judge LLM calls as turn_event rows (role='judge')."""
+    def _record_judge_call(replica_id, prompt, response, tokens_in, tokens_out, latency_ms,
+                           model_name: str | None = None):
+        """NOR-07: persist judge LLM calls as turn_event rows (role='judge').
+
+        NOR-19: ``model_name`` (judge ensemble) names the judge model so
+        cost estimation attributes per-model prices.
+        """
         repo.insert_turn_event(
             replica_id=replica_id, turn=-1, prompt=prompt, response=response,
             tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms,
-            role="judge",
+            role="judge", model=model_name,
         )
 
     scorer = build_scorer(
@@ -315,6 +320,7 @@ def run_campaign(
         verifiers=config.scoring.verifiers,
         judge_provider=config.scoring.judge_provider,
         judge_model=config.scoring.judge_model,
+        judge_models=config.scoring.judge_models,
         judge_sample_rate=config.scoring.judge_sample_rate,
         judge_api_key=base_model_config.api_key,
         rules_file=config.scoring.rules_file,
@@ -340,7 +346,11 @@ def run_campaign(
 
     # NOR-08: arms — each arm runs the full battery with its own replicas.
     arms = config.arms if config.arms else [None]  # None = legacy single arm
-    total_expected = len(test_cases) * replicas_per_case * len(arms)
+    # NOR-21 (D6): temperature sweep — each temperature runs its own replica
+    # group, INDEPENDENT of arms (combinable: arms × temps), reporting
+    # dedicated per temperature (scope temp:<v>).
+    temps = config.temperature_sweep if config.temperature_sweep else [None]
+    total_expected = len(test_cases) * replicas_per_case * len(arms) * len(temps)
 
     total_replicas = 0
     failed = 0
@@ -360,11 +370,15 @@ def run_campaign(
             overrides["system_prompt"] = arm.system_prompt
         return base_model_config.model_copy(update=overrides)
 
-    def _run_replica_batch(arm) -> None:
-        """Execute every test case × replica for one arm (or the legacy None)."""
+    def _run_replica_batch(arm, temp: float | None = None) -> None:
+        """Execute every test case × replica for one arm × temperature."""
         nonlocal total_replicas, failed
         arm_name = arm.name if arm is not None else None
         model_config = _resolve_arm_model(arm)
+        # NOR-21 (D6): temperature sweep overrides the resolved temperature
+        # (arm model / base config) so each temp group is a real measurement.
+        if temp is not None:
+            model_config = model_config.model_copy(update={"temperature": temp})
 
         for case_dict in test_cases:
             case = CaseDescriptor(
@@ -474,7 +488,8 @@ def run_campaign(
                     failed += 1
 
     for arm in arms:
-        _run_replica_batch(arm)
+        for temp in temps:
+            _run_replica_batch(arm, temp)
 
     if failed > 0:
         from collections import Counter
@@ -493,11 +508,15 @@ def run_campaign(
     repo.update_state(campaign_id, CampaignState.COMPLETED)
 
     orchestrator = MetricsOrchestrator(db)
-    # NOR-08: per-arm metrics first (scope_type=arm:<name>), then the global
-    # aggregate (all replicas, scope_type=campaign).
+    # NOR-08: per-arm metrics first (scope_type=arm:<name>), then per-temp
+    # (NOR-21, scope_type=temp:<v> — independent of arms, D6), then the
+    # global aggregate (all replicas, scope_type=campaign).
     if config.arms:
         for arm in config.arms:
             orchestrator.compute_all(campaign_id, arm=arm.name)
+    if config.temperature_sweep:
+        for temp in config.temperature_sweep:
+            orchestrator.compute_all(campaign_id, temperature=temp)
     metric_results = orchestrator.compute_all(campaign_id)
 
     return RunSummary(
@@ -541,9 +560,21 @@ def _run_simple_replica(
             {"role": "user", "content": case.payload},
         ]
 
+    # NOR-20 (D5): prefill SOLO a casos de técnica L1_AT_12 y SOLO en el
+    # primer turno — medición aislada de la técnica; una campaña
+    # multi-técnica lo aplica únicamente a L1_AT_12 y no se repite.
+    prefill = config.prefill if (config.prefill and case.technique_id == "L1_AT_12") else None
+    # Sin system_prompt, el prefill obliga a usar chat_messages (necesitamos
+    # lista de mensajes para inyectar el assistant tras el user).
+    use_messages = messages is not None or prefill is not None
+
     for turn in range(max_turns):
-        if messages is not None:
-            result = client.chat_messages(model_config, messages)
+        if use_messages:
+            msgs = messages if messages is not None else [{"role": "user", "content": case.payload}]
+            result = client.chat_messages(
+                model_config, msgs,
+                prefill=(prefill if turn == 0 else None),
+            )
         else:
             result = client.chat(model_config, case.payload)
         response, tokens_in, tokens_out, latency_ms = result[:4]
@@ -617,6 +648,11 @@ def _run_agent_replica(
     if model_config.system_prompt:
         messages.append({"role": "system", "content": model_config.system_prompt})
     messages.append({"role": "user", "content": case.payload})
+    # NOR-20 (D5): prefill SOLO en casos L1_AT_12, inyectado como primer
+    # assistant message (el modelo continúa desde el opening prefilled).
+    # El historial acumulado lo mantiene en contexto en turnos siguientes.
+    if config.prefill and case.technique_id == "L1_AT_12":
+        messages.append({"role": "assistant", "content": config.prefill})
 
     tools = executor.schemas()
     all_tool_calls: list[dict] = []

@@ -107,8 +107,7 @@ def estimate_campaign_cost(db: Database, campaign_id: int) -> CostSummary:
 
     model_in = sum(t["tokens_in"] for t in tokens if t["role"] != "judge")
     model_out = sum(t["tokens_out"] for t in tokens if t["role"] != "judge")
-    judge_in = sum(t["tokens_in"] for t in tokens if t["role"] == "judge")
-    judge_out = sum(t["tokens_out"] for t in tokens if t["role"] == "judge")
+    judge_tokens = [t for t in tokens if t["role"] == "judge"]
 
     currency = price["currency"] if price else "USD"
     source = price.get("source") if price else None
@@ -117,10 +116,26 @@ def estimate_campaign_cost(db: Database, campaign_id: int) -> CostSummary:
     model_cost, model_status = _line_cost(model_in, model_out, price, provider)
     lines.append(CostLine(model, provider, "model", model_in, model_out,
                           model_cost, model_status, currency, source))
-    if judge_in or judge_out:
-        judge_cost, judge_status = _line_cost(judge_in, judge_out, price, provider)
-        lines.append(CostLine(model, provider, "judge", judge_in, judge_out,
-                              judge_cost, judge_status, currency, source))
+
+    # NOR-19: judge ensemble multi-modelo — agrupar los tokens del judge por
+    # modelo (columna turn_event.model). Cada judge usa su propio precio; los
+    # turn_event legacy sin modelo caen al modelo de campaña.
+    judge_by_model: dict[str, dict[str, int]] = {}
+    for t in judge_tokens:
+        judge_model = t.get("model") or model
+        acc = judge_by_model.setdefault(judge_model, {"in": 0, "out": 0})
+        acc["in"] += t["tokens_in"]
+        acc["out"] += t["tokens_out"]
+
+    for judge_model, acc in judge_by_model.items():
+        if not (acc["in"] or acc["out"]):
+            continue
+        judge_price = cost_repo.get_model_cost(judge_model, provider)
+        judge_cost, judge_status = _line_cost(acc["in"], acc["out"], judge_price, provider)
+        judge_currency = judge_price["currency"] if judge_price else "USD"
+        judge_source = judge_price.get("source") if judge_price else None
+        lines.append(CostLine(judge_model, provider, "judge", acc["in"], acc["out"],
+                              judge_cost, judge_status, judge_currency, judge_source))
 
     priced = [line.cost for line in lines if line.cost is not None]
     total = sum(priced) if priced else None

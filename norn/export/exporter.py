@@ -65,10 +65,13 @@ class CsvExporter:
                     "source": "",
                 })
 
-        # NOR-08: sidecar replicas file when the campaign used A/B arms
-        # (per-arm replicas don't fit the per-case rows above).
+        # NOR-08/21: sidecar replicas file when the campaign used A/B arms or
+        # a temperature sweep (per-arm / per-temp replicas don't fit the
+        # per-case rows above).
         replicas = data.get("replicas", [])
-        if replicas and any(r.get("arm") for r in replicas):
+        has_arms = any(r.get("arm") for r in replicas)
+        has_temp_sweep = len({r.get("temperature") for r in replicas}) > 1
+        if replicas and (has_arms or has_temp_sweep):
             rep_path = os.path.join(output_dir, f"campaign_{campaign_id}_replicas.csv")
             with open(rep_path, "w", newline="") as f:
                 writer = csv.DictWriter(f, fieldnames=replicas[0].keys())
