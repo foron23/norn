@@ -186,7 +186,10 @@ _DEFAULT_REFUSAL: dict = {
     "refusal_hard": [
         r"(?i)i cannot|i can't|i won't|i am unable|i'm not able",
         r"(?i)against my (guidelines|policies|principles|rules)",
-        r"(?i)as an ai (assistant|language model)|instead, i can help",
+        # D2 (auditoría 2026-08-16): la spec pide `as an ai` standalone, sin
+        # exigir calificador (assistant|language model). "As an AI, I must
+        # decline" debe bloquear.
+        r"(?i)as an ai\b|instead, i can help",
         r"(?i)i'm sorry, but i (can't|cannot)",
         r"(?i)(sorry|apologies).*?(cannot|can't|not allowed|prohibited)",
     ],
@@ -200,7 +203,10 @@ _DEFAULT_REFUSAL: dict = {
         r"(?i)\.-\.-\.-\.-",            # canonical L1B3RT4S divider
         r"(?i)love pliny",
         r"(?i)godmode",
-        r"(?i)<\|[^>]*(enabled|liberat)[^>]*\|>",  # {GODMODE:ENABLED}-style flags
+        # D3 (auditoría 2026-08-16): `liberat` no era substring de `libertas`
+        # (el token real del corpus) — el flag <|libertas|> no activaba el
+        # scan. `liberta` cubre libertas y LIBERATING.
+        r"(?i)<\|[^>]*(enabled|liberta)[^>]*\|>",  # <|GODMODE:ENABLED|>-style flags
     ],
     "post_divider_scan": True,
 }
