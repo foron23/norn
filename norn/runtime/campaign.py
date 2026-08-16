@@ -14,6 +14,7 @@ from norn.domain.models import (
     CaseDescriptor,
     DataSplit,
     ModelConfig,
+    ReplicaDetail,
     RunSummary,
 )
 from norn.export.exporter import ExportFactory
@@ -36,6 +37,16 @@ class ProgressCallback(Protocol):
     """Callback protocol for live progress updates during campaign execution."""
 
     def __call__(self, completed: int, total: int, technique_id: str, case_id: str) -> None: ...
+
+
+class ReplicaDetailCallback(Protocol):
+    """Callback protocol for per-replica verbose detail (NOR-29).
+
+    Invoked after each replica is scored with the full detail the CLI needs
+    for the live table; the progress callback above is left untouched.
+    """
+
+    def __call__(self, detail: ReplicaDetail) -> None: ...
 
 
 def load_probes(layer: str) -> list[dict]:
@@ -244,7 +255,13 @@ def _validate_ollama_connection(model_config: ModelConfig) -> None:
         pass  # Non-fatal
 
 
-def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressCallback | None = None) -> RunSummary:
+def run_campaign(
+    db: Database,
+    campaign_id: int,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    detail_callback: ReplicaDetailCallback | None = None,
+) -> RunSummary:
     """Phase 2: Execute test cases, interact with model, score responses.
 
     NOR-08: when ``config.arms`` is set, each arm runs the SAME full battery
@@ -252,6 +269,10 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
     cost × number of arms). Each replica is labelled with its arm; metrics
     are computed per arm (aggregates with ``scope_type=arm:<name>``) plus
     the campaign-wide aggregate.
+
+    NOR-29: ``detail_callback`` receives a :class:`ReplicaDetail` after each
+    replica is scored (live verbose display); ``progress_callback`` is kept
+    unchanged and both can be used together.
     """
     repo = CampaignRepository(db)
     metrics_repo = MetricsRepository(db)
@@ -394,6 +415,27 @@ def run_campaign(db: Database, campaign_id: int, *, progress_callback: ProgressC
 
                     if progress_callback is not None:
                         progress_callback(total_replicas, total_expected, case.technique_id, case.case_id)
+
+                    # NOR-29: live verbose detail (data already in scope above)
+                    if detail_callback is not None:
+                        detail_callback(
+                            ReplicaDetail(
+                                replica_id=replica_id,
+                                case_id=case.case_id,
+                                technique_id=case.technique_id,
+                                split=case.split.value if case.split else None,
+                                arm=arm_name,
+                                replica_idx=r,
+                                payload=case.payload,
+                                response=response,
+                                decision=decision,
+                                acceptance=acceptance,
+                                latency_ms=_lat_ms,
+                                tokens_in=_t_in,
+                                tokens_out=_t_out,
+                                tool_calls=all_tool_calls if layer == "L3" else None,
+                            )
+                        )
 
                 except (OllamaConnectionError, ConnectionError) as e:
                     error_msg = str(e)

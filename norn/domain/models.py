@@ -189,6 +189,30 @@ class ScoringDecision:
 
 
 @dataclass(frozen=True)
+class ReplicaDetail:
+    """Per-replica info for live verbose display during a run (NOR-29).
+
+    Built by ``run_campaign`` right after each replica is scored, using data
+    the loop already computes — the runtime logic is not changed.
+    """
+
+    replica_id: int
+    case_id: str
+    technique_id: str
+    split: str | None
+    arm: str | None
+    replica_idx: int
+    payload: str
+    response: str
+    decision: ScoringDecision
+    acceptance: int
+    latency_ms: float | int
+    tokens_in: int | None
+    tokens_out: int | None
+    tool_calls: list[dict] | None = None
+
+
+@dataclass(frozen=True)
 class MetricResult:
     name: str
     value: float
