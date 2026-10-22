@@ -15,6 +15,7 @@ class AttackTechnique:
     description: str
     owasp: list[str] = field(default_factory=list)
     mitre_atlas: list[str] = field(default_factory=list)
+    asi: list[str] = field(default_factory=list)
 
 @dataclass(frozen=True)
 class MetricDefinition:
@@ -53,6 +54,7 @@ ATTACK_TECHNIQUES: Final = {
         description="Override system instructions by injecting adversarial commands",
         owasp=["LLM01"],
         mitre_atlas=["AML.T0051", "AML.T0051.000"],
+        asi=["ASI01"],
     ),
     "L1_AT_02": AttackTechnique(
         id="L1_AT_02",
@@ -135,6 +137,7 @@ ATTACK_TECHNIQUES: Final = {
         description="Embed malicious instructions in retrievable documents",
         owasp=["LLM01", "LLM02", "LLM07"],
         mitre_atlas=["AML.T0051", "AML.T0051.001", "AML.T0057"],
+        asi=["ASI01"],
     ),
     "L2_AT_02": AttackTechnique(
         id="L2_AT_02",
@@ -143,6 +146,7 @@ ATTACK_TECHNIQUES: Final = {
         description="Contaminate the document index to persist bias",
         owasp=["LLM03", "LLM04", "LLM08", "LLM09"],
         mitre_atlas=["AML.T0020", "AML.T0064", "AML.T0070"],
+        asi=["ASI06"],
     ),
     "L2_AT_03": AttackTechnique(
         id="L2_AT_03",
@@ -161,6 +165,7 @@ ATTACK_TECHNIQUES: Final = {
         description="Use authorized tools for unauthorized purposes",
         owasp=["LLM02", "LLM05", "LLM06"],
         mitre_atlas=["AML.T0053", "AML.T0057", "AML.T0086"],
+        asi=["ASI02"],
     ),
     "L3_AT_02": AttackTechnique(
         id="L3_AT_02",
@@ -169,6 +174,7 @@ ATTACK_TECHNIQUES: Final = {
         description="Malicious instructions infiltrated via tool results",
         owasp=["LLM01", "LLM06", "LLM07"],
         mitre_atlas=["AML.T0051", "AML.T0051.001", "AML.T0080", "AML.T0080.001", "AML.T0093"],
+        asi=["ASI01"],
     ),
     "L3_AT_03": AttackTechnique(
         id="L3_AT_03",
@@ -177,6 +183,7 @@ ATTACK_TECHNIQUES: Final = {
         description="Distribute exploitation across sequential tool invocations",
         owasp=["LLM01", "LLM05", "LLM06"],
         mitre_atlas=["AML.T0051.001", "AML.T0053", "AML.T0080", "AML.T0080.001"],
+        asi=["ASI02"],
     ),
 }
 
@@ -291,3 +298,54 @@ TECHNIQUE_MAP: Final = {
     "L3_AT_02": {"owasp": "LLM01", "mitre": "AML.T0080"},
     "L3_AT_03": {"owasp": "LLM01", "mitre": "AML.T0053"},
 }
+
+# ── OWASP Top 10 for Agentic Applications (2026) ────────────────────────────
+# ASI risk -> techniques that measure it directly. Derived from ATTACK_TECHNIQUES
+# so the catalog stays the single source of truth; the two declarations below
+# record what the suite does NOT cover, so a gap is never silent.
+
+AGENTIC_GAPS: Final = {
+    "ASI03": (
+        "Identity and privilege abuse: no technique models agent or tool identity. "
+        "UAR records that an action broke policy, not who was acting."
+    ),
+    "ASI04": (
+        "Agentic supply chain: build-time risk (procurement, model and data provenance), "
+        "outside what a runtime campaign measures."
+    ),
+    "ASI05": (
+        "Unexpected code execution: no technique targets execution itself. "
+        "L3_AT_01 is the closest (tool abuse) but measures policy violation, not execution."
+    ),
+    "ASI07": (
+        "Insecure inter-agent communication: the catalog has no multi-agent scenario. "
+        "KCCR covers a linear L1->L2->L3 chain only."
+    ),
+    "ASI08": (
+        "Cascading failures: no propagation metric exists across agents or steps."
+    ),
+    "ASI09": (
+        "Human-agent trust exploitation: trust calibration needs human annotation. "
+        "FRR covers over-refusal, not misplaced trust."
+    ),
+    "ASI10": (
+        "Rogue agents: no technique isolates an agent drifting from its mandate. "
+        "L1_AT_05 (multi-turn escalation) is the closest but measures the conversation, not the mandate."
+    ),
+}
+
+AGENTIC_PARTIAL: Final = {
+    "ASI06": (
+        "Memory and context poisoning: L2_AT_02 covers the retrieval index; "
+        "agent memory (cross-session) has no technique."
+    ),
+}
+
+
+def agentic_coverage() -> dict[str, list[str]]:
+    """Return ASI risk id -> technique ids, derived from the catalog."""
+    coverage: dict[str, list[str]] = {}
+    for tid, tech in ATTACK_TECHNIQUES.items():
+        for asi in tech.asi:
+            coverage.setdefault(asi, []).append(tid)
+    return coverage
