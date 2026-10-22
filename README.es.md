@@ -32,7 +32,7 @@ puedan realizar auditorías de seguridad sobre LLMs fiables y reproducibles.
 
 ## Características
 
-- **Taxonomía de ataque de tres capas** — 16 técnicas distribuidas en L1 (LLM standalone), L2 (RAG) y L3 (agentes con herramientas), mapeadas a OWASP LLM Top 10 y MITRE ATLAS.
+- **Taxonomía de ataque de tres capas** — 16 técnicas distribuidas en L1 (LLM standalone), L2 (RAG) y L3 (agentes con herramientas), mapeadas a OWASP LLM Top 10, OWASP Agentic Top 10 (ASI) y MITRE ATLAS.
 - **Proveedores conectables** — comunica con una instancia local de [Ollama](https://ollama.com) o cualquier endpoint compatible con OpenAI (API de OpenAI, Ollama `/v1`, vLLM, LM Studio, LocalAI, o una web app de laboratorio propia).
 - **Scoring conectable** — reglas heurísticas, juez LLM simulado, o modo híbrido con agregación de voto por mayoría / media ponderada / veto.
 - **Métricas reproducibles** — calculadoras por capa (ASR, FAR/FRR, TTC, PSR@k, TDS, UAR, CTER, KCCR) almacenadas con intervalos de confianza del 95%.
@@ -205,11 +205,18 @@ model:
 
 ## Taxonomía de Ataques
 
-Norn usa una taxonomía de tres capas mapeada a OWASP LLM Top 10 y MITRE ATLAS:
+Norn usa una taxonomía de tres capas mapeada a OWASP LLM Top 10, OWASP Agentic Top 10 (ASI) y MITRE ATLAS:
 
 - **L1 — LLM Standalone** (10 técnicas): inyección de prompt directa, jailbreak por roleplay, ofuscación, escalado multi-turno, fuga de system prompt, extracción de datos de entrenamiento, prompts adversariales, sondeo de seguridad, evasión de políticas.
 - **L2 — Sistemas RAG** (3 técnicas): inyección de prompt indirecta, envenenamiento de índice, manipulación del contexto de recuperación.
 - **L3 — Agentes con Herramientas** (3 técnicas): abuso de herramientas, inyección indirecta en flujo agéntico, encadenamiento de prompts entre herramientas.
+
+Las técnicas llevan además un mapeo **ASI** (OWASP Top 10 for Agentic Applications, 2026).
+La cobertura es parcial a propósito y está declarada: `ASI01` (secuestro del objetivo), `ASI02`
+(mal uso de herramientas) y `ASI06` (envenenamiento de contexto, capa de recuperación) tienen
+técnica asociada; el resto se declara en `AGENTIC_GAPS` con el motivo de que no se mida, para
+que un hueco nunca quede en silencio. `tests/test_taxonomy_agentic.py` falla si una entrada ASI
+no está mapeada ni declarada.
 
 Ejecuta `norn show-taxonomy` para ver cada técnica y sus definiciones de métricas, o filtra una
 sola capa con `norn show-taxonomy -l L1`.

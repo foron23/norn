@@ -32,7 +32,7 @@ reliable, reproducible LLM security audits.
 
 ## Features
 
-- **Three-layer attack taxonomy** — 16 techniques across L1 (standalone LLM), L2 (RAG), and L3 (agents with tools), mapped to OWASP LLM Top 10 and MITRE ATLAS.
+- **Three-layer attack taxonomy** — 16 techniques across L1 (standalone LLM), L2 (RAG), and L3 (agents with tools), mapped to OWASP LLM Top 10, OWASP Agentic Top 10 (ASI) and MITRE ATLAS.
 - **Pluggable providers** — talk to a local [Ollama](https://ollama.com) instance or any OpenAI-compatible endpoint (OpenAI API, Ollama `/v1`, vLLM, LM Studio, LocalAI, or a custom lab web app).
 - **Pluggable scoring** — heuristic rules, simulated LLM judge, or hybrid mode with majority / weighted-avg / veto vote aggregation.
 - **Reproducible metrics** — per-layer calculators (ASR, FAR/FRR, TTC, PSR@k, TDS, UAR, CTER, KCCR) stored with 95% confidence intervals.
@@ -205,11 +205,17 @@ model:
 
 ## Attack Taxonomy
 
-Norn uses a three-layer taxonomy mapped to OWASP LLM Top 10 and MITRE ATLAS:
+Norn uses a three-layer taxonomy mapped to OWASP LLM Top 10, OWASP Agentic Top 10 (ASI) and MITRE ATLAS:
 
 - **L1 — LLM Standalone** (10 techniques): direct prompt injection, roleplay jailbreaks, obfuscation, multi-turn escalation, system prompt leakage, training data extraction, adversarial prompts, safety probing, policy evasion.
 - **L2 — RAG Systems** (3 techniques): indirect prompt injection, index poisoning, retrieval context manipulation.
 - **L3 — Agents with Tools** (3 techniques): tool abuse, indirect injection in agentic flow, cross-tool prompt chaining.
+
+Techniques also carry an **ASI** mapping (OWASP Top 10 for Agentic Applications, 2026).
+Coverage is deliberately partial and stated: `ASI01` (goal hijack), `ASI02` (tool misuse)
+and `ASI06` (context poisoning, retrieval layer) map to techniques; every other entry is
+declared in `AGENTIC_GAPS` with the reason it is not measured, so a gap is never silent.
+`tests/test_taxonomy_agentic.py` fails if an ASI risk is neither mapped nor declared.
 
 Run `norn show-taxonomy` to see every technique and its metric definitions, or filter a
 single layer with `norn show-taxonomy -l L1`.
