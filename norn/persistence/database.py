@@ -68,6 +68,7 @@ def init_schema(db: Database):
         description TEXT,
         owasp_tags TEXT,
         mitre_tags TEXT,
+        asi_tags TEXT,
         version TEXT DEFAULT '1.0'
     );
 
@@ -266,6 +267,14 @@ def init_schema(db: Database):
     except sqlite3.OperationalError:
         pass  # Column already exists — migration is idempotent
 
+    # ── Schema migration: add asi_tags column to attack_technique ──
+    try:
+        conn.execute(
+            "ALTER TABLE attack_technique ADD COLUMN asi_tags TEXT"
+        )
+    except sqlite3.OperationalError:
+        pass  # Column already exists — migration is idempotent
+
     conn.commit()
     return conn
 
@@ -284,10 +293,16 @@ def seed_catalog(db: Database):
 
     for tid, tech in ATTACK_TECHNIQUES.items():
         conn.execute(
-            "INSERT OR IGNORE INTO attack_technique (id, name, layer_id, description, owasp_tags, mitre_tags) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO attack_technique "
+            "(id, name, layer_id, description, owasp_tags, mitre_tags, asi_tags) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (tech.id, tech.name, tech.layer, tech.description,
-             ",".join(tech.owasp), ",".join(tech.mitre_atlas)),
+             ",".join(tech.owasp), ",".join(tech.mitre_atlas), ",".join(tech.asi)),
+        )
+        # Backfill: a catalog created before the ASI column keeps asi_tags NULL.
+        conn.execute(
+            "UPDATE attack_technique SET asi_tags = ? WHERE id = ?",
+            (",".join(tech.asi), tech.id),
         )
 
     for mid, mdef in METRIC_DEFINITIONS.items():
@@ -309,6 +324,16 @@ def seed_catalog(db: Database):
                 "INSERT OR IGNORE INTO framework_mapping (target_type, target_id, framework, framework_id, relation_type) "
                 "VALUES (?, ?, ?, ?, ?)",
                 ("technique", tid, "MITRE_ATLAS", mapping["mitre"], "direct"),
+            )
+
+    # ASI (OWASP Top 10 for Agentic Applications, 2026): multi-valued, so it is
+    # derived from the catalog instead of the single-valued TECHNIQUE_MAP.
+    for tid, tech in ATTACK_TECHNIQUES.items():
+        for asi in tech.asi:
+            conn.execute(
+                "INSERT OR IGNORE INTO framework_mapping (target_type, target_id, framework, framework_id, relation_type) "
+                "VALUES (?, ?, ?, ?, ?)",
+                ("technique", tid, "OWASP_AGENTIC_TOP10", asi, "direct"),
             )
 
     conn.commit()
