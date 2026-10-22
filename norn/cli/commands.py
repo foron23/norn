@@ -365,9 +365,15 @@ def show_taxonomy(
         console.print(Panel(f"[bold]{layer_key}: {info['name']}[/bold]\n{info['description']}", title="Layer"))
 
         techniques = [t for t in ATTACK_TECHNIQUES.values() if t.layer == layer_key]
-        ttable = Table("ID", "Name", "OWASP", "MITRE ATLAS")
+        ttable = Table("ID", "Name", "OWASP", "OWASP Agentic", "MITRE ATLAS")
         for t in techniques:
-            ttable.add_row(t.id, t.name, ", ".join(t.owasp[:2]), ", ".join(t.mitre_atlas[:2]))
+            ttable.add_row(
+                t.id,
+                t.name,
+                ", ".join(t.owasp[:2]),
+                ", ".join(t.asi) or "—",
+                ", ".join(t.mitre_atlas[:2]),
+            )
         console.print(ttable)
         console.print()
 
