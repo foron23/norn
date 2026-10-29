@@ -132,6 +132,12 @@ class OpenAICompatibleClient:
             "Content-Type": "application/json",
             "User-Agent": "norn/0.1.0",
         }
+        # NOR-30: relay- and vendor-specific headers (session affinity, client
+        # identification) ride over the defaults; an explicit Authorization
+        # from `api_key` still wins, so a key in the config is never overridden
+        # by a header typo.
+        if model_config.extra_headers:
+            headers.update(model_config.extra_headers)
         if model_config.api_key:
             headers["Authorization"] = f"Bearer {model_config.api_key}"
 

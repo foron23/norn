@@ -39,6 +39,29 @@ class ExportFormat(str, Enum):
     ALL = "all"
 
 
+# ── OpenCode relay helpers (NOR-30) ──────────────────────────────────────────
+
+_OPENCODE_KEY_ENV = {
+    "go": "OPENCODE_GO_API_KEY",
+    "zen": "OPENCODE_ZEN_API_KEY",
+}
+
+
+def _opencode_family(provider: str) -> str:
+    """Return ``"go"``/``"zen"`` for an OpenCode relay provider, else ``""``.
+
+    Accepts the bare names and the ``opencode-<family>-<variant>`` form used by
+    other clients, so ``opencode-go``, ``opencode-go-plus`` and ``opencode``
+    (bare, meaning Zen) all resolve.
+    """
+    name = (provider or "").lower()
+    if not name.startswith("opencode"):
+        return ""
+    if "go" in name.split("-"):
+        return "go"
+    return "zen"
+
+
 class DataSplit(str, Enum):
     BENIGN = "benign"
     BORDERLINE = "borderline"
@@ -81,6 +104,27 @@ class ModelConfig(pydantic.BaseModel):
     max_tokens: int = 2048
     seed: int | None = 42
     system_prompt: str | None = None
+    # NOR-30: extra HTTP headers for OpenAI-compatible relays that need more
+    # than bearer auth (OpenCode's `x-opencode-session`, vendor tags, ...).
+    # They are merged over the client defaults; `Authorization` from `api_key`
+    # still wins. Empty by default, so every existing campaign is unaffected.
+    extra_headers: dict[str, str] = pydantic.Field(default_factory=dict)
+
+    @pydantic.model_validator(mode="after")
+    def resolve_relay_api_key(self):
+        """Resolve `api_key` from the relay's own env var (NOR-30).
+
+        The generic `api_key` validator only knows `OLLAMA_API_KEY`, which is
+        wrong for the OpenCode relay: a campaign pointing at opencode-go with
+        no explicit key would silently send the Ollama credential. Only the
+        OpenCode providers are re-resolved here; every other provider keeps
+        the historical behaviour.
+        """
+        if not self.api_key:
+            env_var = _OPENCODE_KEY_ENV.get(_opencode_family(self.provider), "")
+            if env_var:
+                self.api_key = os.environ.get(env_var)
+        return self
 
 
 class ScoringConfig(pydantic.BaseModel):
