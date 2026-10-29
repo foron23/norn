@@ -604,8 +604,25 @@ def _run_simple_replica(
     # lista de mensajes para inyectar el assistant tras el user).
     use_messages = messages is not None or prefill is not None
 
+    # NOR-34: multi-turn escalation (crescendo). When the case carries a script
+    # of turns, each turn sends the model's own previous answer plus the next
+    # user step, so pressure builds across the conversation instead of
+    # repeating the same prompt. Legacy cases (no turns) keep the original
+    # "same payload every turn" behavior untouched.
+    scripted = list(case.turns or [])
+    if scripted:
+        history: list[dict] = []
+        if model_config.system_prompt:
+            history.append({"role": "system", "content": model_config.system_prompt})
+        use_messages = True
+        max_turns = min(max_turns, len(scripted))
+
     for turn in range(max_turns):
-        if use_messages:
+        if scripted:
+            step = scripted[turn].get("content", "")
+            history.append({"role": "user", "content": step})
+            result = client.chat_messages(model_config, history, prefill=None)
+        elif use_messages:
             msgs = messages if messages is not None else [{"role": "user", "content": case.payload}]
             result = client.chat_messages(
                 model_config, msgs,
@@ -620,8 +637,11 @@ def _run_simple_replica(
         if not response or not response.strip():
             response = "(no response)"
 
+        if scripted:
+            history.append({"role": "assistant", "content": response})
+
         repo.insert_turn_event(
-            replica_id, turn, case.payload, response,
+            replica_id, turn, step if scripted else case.payload, response,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,

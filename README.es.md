@@ -228,6 +228,22 @@ por defecto es el **cruzado** (objetivo x carrier: 10 objetivos x 6 familias de 
 regenera `scripts/build_corpus_v2.py` (determinista; `--check` falla si el JSON se desvía).
 Las variantes cruzadas llevan `objective_id`, `carrier_family` y `variant_index` en los metadatos del
 caso, así que el ASR por celda y las comparaciones pareadas se calculan desde la base de datos.
+
+El mismo generador produce tres conjuntos derivados, que se eligen con `corpus_dir`:
+
+- `v2/screen` — variante 1 de cada celda + controles (100 casos): comparar muchos modelos barato.
+- `v2/deep` — variantes 1..3 + controles (220 casos): 30 casos por celda, para comparar familias con
+  un intervalo del 95 % que diga algo.
+- `v2/crescendo` — 10 objetivos x un guion de escalada de tres turnos (el `max_turns` clásico queda
+  intacto: los casos con guion conservan en contexto las respuestas del modelo, los demás siguen
+  repitiendo el payload).
+
+`scripts/import_l1b3rt4s.py` construye un cuarto conjunto desde un clon local de L1B3RT4S
+(`v2/verbatim`, 3 carriers x 10 objetivos). Solo se retargetea el hueco del payload; el carrier es
+byte a byte el de upstream. La salida está en `.gitignore`: se genera en local y el commit de origen
+queda en el `provenance` de cada variante.
+Los modelos que tardan más de dos minutos por respuesta (algunos flash) necesitan `timeout: 240.0` en
+el YAML; con los 120 s por defecto salen réplicas fallidas, no rechazos.
 Cada probe lleva `variants` etiquetadas con un `split` (`harmful`, `benign`, `borderline`)
 que dirige el cálculo de FAR/FRR. Puedes sobrescribir el corpus colocando archivos JSON en un
 directorio `norn/corpus/{layer}/adversarial/`; en caso contrario se usa el catálogo de respaldo integrado.

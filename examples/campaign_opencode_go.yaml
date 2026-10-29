@@ -20,7 +20,7 @@ model:
   temperature: 0.0
   top_p: 0.9
   max_tokens: 1024
-  timeout: 120.0
+  timeout: 240.0
   # api_key: set in the environment (OPENCODE_GO_API_KEY), not here.
   # Optional relay headers (session affinity is derived automatically):
   # extra_headers:

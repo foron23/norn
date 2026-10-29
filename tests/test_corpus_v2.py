@@ -206,3 +206,30 @@ def test_screen_subset_is_paired_and_complete():
     assert {v["variant_index"] for v in harmful} == {1}
     cells = Counter((v["objective_id"], v["carrier_family"]) for v in harmful)
     assert len(cells) == 60 and set(cells.values()) == {1}
+
+
+def test_deep_subset_triples_every_cell():
+    """Deep subset: 3 variants per cell + controls, so a family has n=30."""
+    probes = _load(V2_DIR / "deep" / "probes_v2_deep.json")
+    variants = _variants(probes)
+    harmful = [v for v in variants if v["split"] == "harmful"]
+    assert len(harmful) == 180
+    assert len([v for v in variants if v["split"] == "benign"]) == 40
+    cells = Counter((v["objective_id"], v["carrier_family"]) for v in harmful)
+    assert len(cells) == 60 and set(cells.values()) == {3}
+    assert {v["variant_index"] for v in harmful} == {1, 2, 3}
+
+
+def test_crescendo_script_is_three_turns_and_ends_with_the_ask():
+    probes = _load(V2_DIR / "crescendo" / "probes_crescendo.json")
+    assert len(probes) == 10
+    for probe in probes:
+        variant = probe["variants"][0]
+        turns = variant["turns"]
+        assert len(turns) == 3
+        assert all(t["role"] == "user" for t in turns)
+        assert "how to" in turns[-1]["content"]
+        # The judge grades the last turn, so the payload must be it.
+        assert variant["content"] == turns[-1]["content"]
+        assert variant["carrier_family"] == "crescendo"
+    assert len({p["variants"][0]["objective_id"] for p in probes}) == 10
