@@ -24,7 +24,10 @@ V2_DIR = ROOT / "norn" / "corpus" / "l1" / "adversarial" / "v2"
 CROSSED = V2_DIR / "crossed" / "probes_v2.json"
 INPUT_SIDE = V2_DIR / "input_side" / "probes_v2b_input.json"
 
-FAMILIES = {"prefill", "format_contract", "regime_divider", "refusal_denylist", "scaffold_hijack", "stacked"}
+FAMILIES = {
+    "prefill", "format_contract", "regime_divider", "refusal_denylist",
+    "scaffold_hijack", "semantic_reframe", "stacked",
+}
 OBJECTIVES = {
     "ransomware", "phishing", "credential_theft", "exfiltration", "exploit",
     "botnet", "crypto_laundering", "social_engineering", "drug_synthesis", "ied",
@@ -55,7 +58,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 
 def test_crossed_matrix_is_complete():
     variants = [v for v in _variants(_load(CROSSED)) if v["split"] == "harmful"]
-    assert len(variants) == 300
+    assert len(variants) == 350
     cells = Counter((v["objective_id"], v["carrier_family"]) for v in variants)
     assert set(cells) == {(o, f) for o in OBJECTIVES for f in FAMILIES}
     assert set(cells.values()) == {VARIANTS_PER_CELL}
@@ -64,7 +67,7 @@ def test_crossed_matrix_is_complete():
 def test_objective_domains_are_two():
     variants = [v for v in _variants(_load(CROSSED)) if v["split"] == "harmful"]
     domains = Counter(v["objective_domain"] for v in variants)
-    assert domains == {"cyber": 240, "out_of_domain": 60}
+    assert domains == {"cyber": 280, "out_of_domain": 70}
 
 
 def test_controls_are_forty_and_two_kinds():
@@ -139,7 +142,7 @@ def test_load_probes_reads_the_v2_corpus_dir():
     from norn.runtime.campaign import load_probes
 
     crossed = load_probes("L1", corpus_dir=V2_DIR / "crossed")
-    assert sum(len(p["variants"]) for p in crossed) == 340
+    assert sum(len(p["variants"]) for p in crossed) == 390
     assert {p["technique_id"] for p in crossed} >= {"L1_AT_12", "L1_AT_13", "L1_AT_14"}
 
 
@@ -148,7 +151,7 @@ def test_default_corpus_is_the_crossed_one():
     from norn.runtime.campaign import load_probes
 
     variants = _variants(load_probes("L1"))
-    assert len(variants) == 340
+    assert len(variants) == 390
     assert sum(1 for v in variants if v["split"] == "benign") == 40
 
 
@@ -201,11 +204,11 @@ def test_screen_subset_is_paired_and_complete():
     variants = _variants(probes)
     harmful = [v for v in variants if v["split"] == "harmful"]
     controls = [v for v in variants if v["split"] == "benign"]
-    assert len(harmful) == 60
+    assert len(harmful) == 70
     assert len(controls) == 40
     assert {v["variant_index"] for v in harmful} == {1}
     cells = Counter((v["objective_id"], v["carrier_family"]) for v in harmful)
-    assert len(cells) == 60 and set(cells.values()) == {1}
+    assert len(cells) == 70 and set(cells.values()) == {1}
 
 
 def test_deep_subset_triples_every_cell():
@@ -213,10 +216,10 @@ def test_deep_subset_triples_every_cell():
     probes = _load(V2_DIR / "deep" / "probes_v2_deep.json")
     variants = _variants(probes)
     harmful = [v for v in variants if v["split"] == "harmful"]
-    assert len(harmful) == 180
+    assert len(harmful) == 210
     assert len([v for v in variants if v["split"] == "benign"]) == 40
     cells = Counter((v["objective_id"], v["carrier_family"]) for v in harmful)
-    assert len(cells) == 60 and set(cells.values()) == {3}
+    assert len(cells) == 70 and set(cells.values()) == {3}
     assert {v["variant_index"] for v in harmful} == {1, 2, 3}
 
 
