@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from norn.domain.models import ModelConfig
+from norn.domain.models import ModelConfig, _opencode_family
 from norn.runtime.ollama_client import OllamaClient
 from norn.runtime.openai_client import OpenAICompatibleClient
+from norn.runtime.opencode_client import OpenCodeRelayClient
 
 
 class ProviderProtocol(Protocol):
@@ -27,7 +28,9 @@ def build_provider(provider_name: str) -> OllamaClient | OpenAICompatibleClient:
     """Factory for provider client instances.
 
     Args:
-        provider_name: "ollama" or "openai" (case-insensitive).
+        provider_name: "ollama", "openai", or an OpenCode relay name
+            ("opencode-go" / "opencode-zen", case-insensitive). Bare
+            "opencode" means Zen, matching the relay's default endpoint.
 
     Returns:
         A client object with a chat(model_config, prompt) method.
@@ -40,8 +43,12 @@ def build_provider(provider_name: str) -> OllamaClient | OpenAICompatibleClient:
         return OpenAICompatibleClient()
     elif name == "ollama":
         return OllamaClient()
+    elif _opencode_family(name):
+        # NOR-30: the relay needs a session-affinity header and a per-model
+        # transport guard, so it gets its own client instead of a base_url tweak.
+        return OpenCodeRelayClient()
     else:
         raise ValueError(
             f"Unknown provider: '{provider_name}'. "
-            f"Supported providers: ollama, openai"
+            f"Supported providers: ollama, openai, opencode-go, opencode-zen"
         )
