@@ -149,3 +149,38 @@ def test_default_corpus_is_untouched_by_v2():
 
     variants = _variants(load_probes("L1"))
     assert len(variants) == 148
+
+
+def test_explicit_corpus_dir_does_not_synthesize_fallback_cases(tmp_path):
+    """NOR-31: an explicit corpus is the whole corpus (no invented probes)."""
+    from norn.domain.models import CampaignConfig, ModelConfig
+    from norn.persistence.database import Database, init_schema, seed_catalog
+    from norn.runtime.campaign import plan_campaign
+
+    db = tmp_path / "plan.db"
+
+    init_schema(Database(str(db)))
+    seed_catalog(Database(str(db)))
+    config = CampaignConfig(
+        campaign_name="v2 plan",
+        layer="L1",
+        model=ModelConfig(model_name="dummy"),
+        corpus_dir=str(V2_DIR / "input_side"),
+        replicas_per_case=1,
+        max_turns=1,
+    )
+    campaign_id = plan_campaign(Database(str(db)), config)
+    import sqlite3
+
+    con = sqlite3.connect(db)
+    try:
+        techniques = {r[0] for r in con.execute(
+            "SELECT DISTINCT technique_id FROM test_case WHERE campaign_id = ?", (campaign_id,)
+        )}
+        total = con.execute(
+            "SELECT COUNT(*) FROM test_case WHERE campaign_id = ?", (campaign_id,)
+        ).fetchone()[0]
+    finally:
+        con.close()
+    assert total == 120
+    assert techniques == {"L1_AT_15", "L1_AT_16", "L1_AT_17", "L1_AT_18"}

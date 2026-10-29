@@ -193,6 +193,14 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
                         "variant_type": variant.get("variant_type", "default"),
                         "probe_source": probe.get("id", ""),
                         "task_id": variant.get("task_id", ""),
+                        # NOR-31: the crossed corpus's analysis keys must survive
+                        # the plan, so per-cell ASR/McNemar can be computed from
+                        # the DB alone.
+                        **{
+                            k: variant[k]
+                            for k in ("objective_id", "objective_domain", "carrier_family", "variant_index")
+                            if k in variant
+                        },
                     },
                 )
                 cases.append(case)
@@ -204,6 +212,11 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
         if config.techniques and tid not in config.techniques:
             continue
         if tid in techniques_seen:
+            continue
+        # NOR-31: an explicit corpus_dir IS the corpus. Synthesizing fallback
+        # cases would add probes the experiment never asked for (8 extra cases
+        # in the v2 plan, one per uncovered technique).
+        if config.corpus_dir:
             continue
 
         # Fallback only for techniques with a known builtin payload (the
