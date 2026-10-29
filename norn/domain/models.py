@@ -262,6 +262,9 @@ class CampaignConfig(pydantic.BaseModel):
     max_tool_calls: int = 5
     techniques: list[str] | None = None
     benign_ratio: float | None = None
+    # NOR-31: alternative corpus root (e.g. the crossed corpus under
+    # norn/corpus/l1/adversarial/v2). None keeps corpus/<layer>/.
+    corpus_dir: str | None = None
     tools: list[str] = pydantic.Field(default_factory=list)
     tools_file: str | None = None
     arms: list[ArmConfig] | None = None

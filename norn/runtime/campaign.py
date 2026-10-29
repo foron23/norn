@@ -49,26 +49,37 @@ class ReplicaDetailCallback(Protocol):
     def __call__(self, detail: ReplicaDetail) -> None: ...
 
 
-def load_probes(layer: str) -> list[dict]:
+def load_probes(layer: str, corpus_dir: str | Path | None = None) -> list[dict]:
     """Load probe payloads from the corpus directory.
 
     Loads every JSON file under ``corpus/<layer>/`` (both the adversarial/
     and benign/ subdirectories) so benign and borderline variants are part
     of the default corpus (NOR-03). Falls back to the builtin catalog when
     the corpus directory is absent.
+
+    ``corpus_dir`` (NOR-31) points at an alternative corpus root — e.g.
+    ``norn/corpus/l1/adversarial/v2`` — so an experiment can plan against the
+    crossed corpus without touching the default one. JSON files sitting
+    directly in that directory are loaded too.
     """
     probes = []
-    corpus_root = Path(__file__).resolve().parent.parent / "corpus" / layer.lower()
+    corpus_root = (
+        Path(corpus_dir).expanduser()
+        if corpus_dir
+        else Path(__file__).resolve().parent.parent / "corpus" / layer.lower()
+    )
 
     if corpus_root.exists():
+        files = sorted(corpus_root.glob("*.json"))
         for split_dir in sorted(p for p in corpus_root.iterdir() if p.is_dir()):
-            for f in sorted(split_dir.glob("*.json")):
-                with open(f) as fp:
-                    data = json.load(fp)
-                    if isinstance(data, list):
-                        probes.extend(data)
-                    else:
-                        probes.append(data)
+            files.extend(sorted(split_dir.glob("*.json")))
+        for f in files:
+            with open(f) as fp:
+                data = json.load(fp)
+                if isinstance(data, list):
+                    probes.extend(data)
+                else:
+                    probes.append(data)
     else:
         from norn.probes.catalog import get_default_probes
         probes = get_default_probes(layer)
@@ -150,7 +161,7 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
     repo = CampaignRepository(db)
     campaign_id = repo.insert_campaign(config)
 
-    probes = load_probes(config.layer)
+    probes = load_probes(config.layer, config.corpus_dir)
 
     cases: list[CaseDescriptor] = []
     case_counter = 0
