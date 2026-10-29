@@ -382,6 +382,23 @@ def build_input_side() -> list[dict]:
     return probes
 
 
+def build_screen(crossed: list[dict]) -> list[dict]:
+    """Screen subset: variant #1 of every cell + all controls (100 cases).
+
+    Used to compare many models cheaply: 60 harmful + 40 controls instead of
+    340. Variant 1 is fixed across models, so results stay paired.
+    """
+    probes = []
+    for probe in crossed:
+        variants = [
+            v for v in probe["variants"]
+            if v["split"] == "benign" or v.get("variant_index") == 1
+        ]
+        if variants:
+            probes.append({**probe, "id": probe["id"] + "_SCREEN", "variants": variants})
+    return probes
+
+
 def _dump(probes: list[dict], path: Path) -> str:
     text = json.dumps(probes, indent=2, ensure_ascii=False) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -400,6 +417,7 @@ def main() -> int:
     targets = [
         (OUT_DIR / "crossed" / "probes_v2.json", crossed),
         (OUT_DIR / "input_side" / "probes_v2b_input.json", input_side),
+        (OUT_DIR / "screen" / "probes_v2_screen.json", build_screen(crossed)),
     ]
 
     total = 0

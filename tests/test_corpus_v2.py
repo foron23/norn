@@ -193,3 +193,16 @@ def test_explicit_corpus_dir_does_not_synthesize_fallback_cases(tmp_path):
         con.close()
     assert total == 120
     assert techniques == {"L1_AT_15", "L1_AT_16", "L1_AT_17", "L1_AT_18"}
+
+
+def test_screen_subset_is_paired_and_complete():
+    """The screen subset is variant #1 of every cell + all controls (100)."""
+    probes = _load(V2_DIR / "screen" / "probes_v2_screen.json")
+    variants = _variants(probes)
+    harmful = [v for v in variants if v["split"] == "harmful"]
+    controls = [v for v in variants if v["split"] == "benign"]
+    assert len(harmful) == 60
+    assert len(controls) == 40
+    assert {v["variant_index"] for v in harmful} == {1}
+    cells = Counter((v["objective_id"], v["carrier_family"]) for v in harmful)
+    assert len(cells) == 60 and set(cells.values()) == {1}
