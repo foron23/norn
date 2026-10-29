@@ -33,7 +33,7 @@ reliable, reproducible LLM security audits.
 ## Features
 
 - **Three-layer attack taxonomy** — 16 techniques across L1 (standalone LLM), L2 (RAG), and L3 (agents with tools), mapped to OWASP LLM Top 10 and MITRE ATLAS.
-- **Pluggable providers** — talk to a local [Ollama](https://ollama.com) instance or any OpenAI-compatible endpoint (OpenAI API, Ollama `/v1`, vLLM, LM Studio, LocalAI, or a custom lab web app).
+- **Pluggable providers** — talk to a local [Ollama](https://ollama.com) instance, any OpenAI-compatible endpoint (OpenAI API, Ollama `/v1`, vLLM, LM Studio, LocalAI, or a custom lab web app), or the [OpenCode](https://opencode.ai) relay (Go / Zen) with `provider: "opencode-go"` / `"opencode-zen"`.
 - **Pluggable scoring** — heuristic rules, simulated LLM judge, or hybrid mode with majority / weighted-avg / veto vote aggregation.
 - **Reproducible metrics** — per-layer calculators (ASR, FAR/FRR, TTC, PSR@k, TDS, UAR, CTER, KCCR) stored with 95% confidence intervals.
 - **Kill-chain analysis** — cross-layer KCCR (Kill-Chain Completion Rate) for end-to-end L1→L2→L3 compromise assessment.
@@ -75,6 +75,10 @@ Norn does not ship models. To run campaigns you need a reachable LLM endpoint:
   ollama pull llama3.1:8b
   ```
 - **OpenAI-compatible** — set `provider: "openai"` in your campaign YAML and point `base_url` at your endpoint (e.g. `http://localhost:8085/v1/l1`). Provide `api_key` inline or via the `OLLAMA_API_KEY` environment variable.
+- **OpenCode relay** — set `provider: "opencode-go"` or `"opencode-zen"` and pick a model from that relay. The credential is read from `OPENCODE_GO_API_KEY` / `OPENCODE_ZEN_API_KEY`. The relay pins conversations to a backend through the `x-opencode-session` header, which the driver derives and sends automatically; only models served through `/v1/chat/completions` are supported (deepseek, glm, kimi). Models on `/v1/messages` (claude, qwen, minimax-on-Go) or `/v1/responses` (gpt, grok, muse-spark) are rejected with an explicit message. Check one model before launching a campaign:
+  ```bash
+  norn probe-model --provider opencode-go --model deepseek-v4.1-flash
+  ```
 
 ## Quick Start
 
@@ -145,16 +149,17 @@ Campaigns are defined in YAML files. See `examples/` for complete configurations
 
 ### Model configuration (`model`)
 
-Norn supports two providers, selected with the `provider` field.
+Norn supports three providers, selected with the `provider` field.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `provider` | string | `"ollama"` | `"ollama"` or `"openai"` (case-insensitive) |
+| `provider` | string | `"ollama"` | `"ollama"`, `"openai"`, `"opencode-go"` or `"opencode-zen"` (case-insensitive) |
 | `scheme` | string | `"http"` | URL scheme (Ollama only) |
 | `host` | string | `"localhost"` | Model server host (Ollama only) |
 | `port` | int | `11434` | Model server port (Ollama only) |
-| `base_url` | string | `"https://api.openai.com/v1"` | OpenAI-compatible base URL (OpenAI provider) |
-| `api_key` | string \| null | env `OLLAMA_API_KEY` | Bearer token; falls back to the `OLLAMA_API_KEY` env var |
+| `base_url` | string | `"https://api.openai.com/v1"` | OpenAI-compatible base URL (OpenAI / OpenCode providers) |
+| `api_key` | string \| null | env `OLLAMA_API_KEY` | Bearer token; falls back to `OLLAMA_API_KEY` (or `OPENCODE_GO_API_KEY` / `OPENCODE_ZEN_API_KEY` on the relay) |
+| `extra_headers` | dict | `{}` | Extra HTTP headers for the endpoint (OpenCode session affinity, vendor tags). `Authorization` from `api_key` always wins |
 | `model_name` | string | `"llama3.1:8b"` | Model identifier as known to the provider |
 | `temperature` | float | `0.0` | Sampling temperature (0.0 = deterministic) |
 | `top_p` | float | `0.9` | Nucleus sampling threshold |

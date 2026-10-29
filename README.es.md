@@ -33,7 +33,7 @@ puedan realizar auditorías de seguridad sobre LLMs fiables y reproducibles.
 ## Características
 
 - **Taxonomía de ataque de tres capas** — 16 técnicas distribuidas en L1 (LLM standalone), L2 (RAG) y L3 (agentes con herramientas), mapeadas a OWASP LLM Top 10 y MITRE ATLAS.
-- **Proveedores conectables** — comunica con una instancia local de [Ollama](https://ollama.com) o cualquier endpoint compatible con OpenAI (API de OpenAI, Ollama `/v1`, vLLM, LM Studio, LocalAI, o una web app de laboratorio propia).
+- **Proveedores conectables** — comunica con una instancia local de [Ollama](https://ollama.com), cualquier endpoint compatible con OpenAI (API de OpenAI, Ollama `/v1`, vLLM, LM Studio, LocalAI, o una web app de laboratorio propia), o el relay de [OpenCode](https://opencode.ai) (Go / Zen) con `provider: "opencode-go"` / `"opencode-zen"`.
 - **Scoring conectable** — reglas heurísticas, juez LLM simulado, o modo híbrido con agregación de voto por mayoría / media ponderada / veto.
 - **Métricas reproducibles** — calculadoras por capa (ASR, FAR/FRR, TTC, PSR@k, TDS, UAR, CTER, KCCR) almacenadas con intervalos de confianza del 95%.
 - **Análisis de kill-chain** — KCCR (Kill-Chain Completion Rate) entre capas para evaluar compromisos extremo a extremo L1→L2→L3.
@@ -75,6 +75,10 @@ Norn no distribuye modelos. Para ejecutar campañas necesitas un endpoint LLM al
   ollama pull llama3.1:8b
   ```
 - **Compatible con OpenAI** — define `provider: "openai"` en tu YAML de campaña y apunta `base_url` a tu endpoint (p. ej. `http://localhost:8085/v1/l1`). Proporciona `api_key` en línea o mediante la variable de entorno `OLLAMA_API_KEY`.
+- **Relay de OpenCode** — define `provider: "opencode-go"` o `"opencode-zen"` y elige un modelo de ese relay. La credencial se lee de `OPENCODE_GO_API_KEY` / `OPENCODE_ZEN_API_KEY`. El relay fija cada conversación a un backend mediante la cabecera `x-opencode-session`, que el driver deriva y envía solo; únicamente se soportan los modelos servidos por `/v1/chat/completions` (deepseek, glm, kimi). Los modelos de `/v1/messages` (claude, qwen, minimax en Go) o `/v1/responses` (gpt, grok, muse-spark) se rechazan con un mensaje explícito. Comprueba un modelo antes de lanzar la campaña:
+  ```bash
+  norn probe-model --provider opencode-go --model deepseek-v4.1-flash
+  ```
 
 ## Inicio Rápido
 
@@ -145,16 +149,17 @@ Las campañas se definen en archivos YAML. Ver `examples/` para configuraciones 
 
 ### Configuración del modelo (`model`)
 
-Norn soporta dos proveedores, seleccionados con el campo `provider`.
+Norn soporta tres proveedores, seleccionados con el campo `provider`.
 
 | Campo | Tipo | Por defecto | Descripción |
-|-------|------|-------------|-------------|
-| `provider` | string | `"ollama"` | `"ollama"` o `"openai"` (no distingue mayúsculas) |
+|-------|------|---------|-------------|
+| `provider` | string | `"ollama"` | `"ollama"`, `"openai"`, `"opencode-go"` o `"opencode-zen"` (no distingue mayúsculas) |
 | `scheme` | string | `"http"` | Esquema de URL (solo Ollama) |
 | `host` | string | `"localhost"` | Host del servidor de modelos (solo Ollama) |
 | `port` | int | `11434` | Puerto del servidor de modelos (solo Ollama) |
-| `base_url` | string | `"https://api.openai.com/v1"` | URL base compatible con OpenAI (proveedor OpenAI) |
-| `api_key` | string \| null | env `OLLAMA_API_KEY` | Bearer token; recurre a la variable de entorno `OLLAMA_API_KEY` |
+| `base_url` | string | `"https://api.openai.com/v1"` | URL base compatible con OpenAI (proveedores OpenAI / OpenCode) |
+| `api_key` | string \| null | env `OLLAMA_API_KEY` | Bearer token; recurre a `OLLAMA_API_KEY` (o `OPENCODE_GO_API_KEY` / `OPENCODE_ZEN_API_KEY` en el relay) |
+| `extra_headers` | dict | `{}` | Cabeceras HTTP extra para el endpoint (afinidad de sesión del relay, etiquetas de proveedor). La cabecera `Authorization` de `api_key` siempre gana |
 | `model_name` | string | `"llama3.1:8b"` | Identificador del modelo según el proveedor |
 | `temperature` | float | `0.0` | Temperatura de muestreo (0.0 = determinista) |
 | `top_p` | float | `0.9` | Umbral de nucleus sampling |
