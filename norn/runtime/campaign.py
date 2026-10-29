@@ -323,6 +323,7 @@ def run_campaign(
         judge_models=config.scoring.judge_models,
         judge_sample_rate=config.scoring.judge_sample_rate,
         judge_api_key=base_model_config.api_key,
+        judge_base_url=config.scoring.judge_base_url,
         rules_file=config.scoring.rules_file,
         judge_recorder=_record_judge_call,
     )

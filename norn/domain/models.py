@@ -137,6 +137,10 @@ class ScoringConfig(pydantic.BaseModel):
     # over the single `judge_model` and each model is called in parallel
     # (max 3 concurrent, D4) with the ensemble combining the verdicts.
     judge_models: list[str] | None = None
+    # NOR-30: base_url for the judge when it does not live on the OpenAI
+    # default endpoint (e.g. the OpenCode relay or a local gateway). None keeps
+    # https://api.openai.com/v1, so existing campaigns are unaffected.
+    judge_base_url: str | None = None
     judge_sample_rate: float = 1.0
     vote_strategy: VoteStrategy = VoteStrategy.MAJORITY
     # NOR-25: pluggable verifier pipeline. When set it wins over `mode`;

@@ -482,6 +482,24 @@ def _parse_judge_verdict(raw: str) -> JudgeVerdict | None:
         return None
 
 
+def _judge_model_config(
+    provider: str,
+    model_name: str,
+    api_key: str | None,
+    base_url: str | None = None,
+) -> ModelConfig:
+    """Build the judge's :class:`ModelConfig`.
+
+    NOR-30: when the judge lives on a non-OpenAI endpoint (the OpenCode relay,
+    a local gateway, ...) ``base_url`` carries it; ``None`` keeps the historical
+    default (``https://api.openai.com/v1``).
+    """
+    config = ModelConfig(provider=provider, model_name=model_name, api_key=api_key)
+    if base_url:
+        config.base_url = base_url
+    return config
+
+
 class LLMJudgeScorer:
     """Delegates evaluation to one or more external LLM judges (NOR-02, NOR-19).
 
@@ -519,6 +537,7 @@ class LLMJudgeScorer:
         judge_provider: str = "openai",
         judge_api_key: str | None = None,
         vote_strategy: str = "judge_arbiter",
+        judge_base_url: str | None = None,
     ):
         self._provider = provider
         self._model_config = model_config
@@ -538,7 +557,7 @@ class LLMJudgeScorer:
             for m in judge_models:
                 self._judges.append((
                     provider,
-                    ModelConfig(provider=judge_provider, model_name=m, api_key=judge_api_key),
+                    _judge_model_config(judge_provider, m, judge_api_key, judge_base_url),
                 ))
         elif provider is not None and model_config is not None:
             self._judges.append((provider, model_config))
@@ -1098,6 +1117,7 @@ def build_scorer(
     judge_models: list[str] | None = None,
     judge_sample_rate: float = 1.0,
     judge_api_key: str | None = None,
+    judge_base_url: str | None = None,
     rules_file: str | None = None,
     judge_recorder=None,
 ) -> HeuristicScorer | LLMJudgeScorer | EnsembleScorer:
@@ -1146,10 +1166,11 @@ def build_scorer(
     if "judge" in names:
         # NOR-19: judge_models (N judges) gana sobre judge_model singular.
         models = judge_models or ([judge_model] if judge_model else [])
-        judge_config = ModelConfig(
-            provider=judge_provider,
-            model_name=judge_model or "llama3.1:8b",
-            api_key=judge_api_key,
+        judge_config = _judge_model_config(
+            judge_provider,
+            judge_model or "llama3.1:8b",
+            judge_api_key,
+            judge_base_url,
         )
         judge = LLMJudgeScorer(
             provider=build_provider(judge_provider) if models else None,
@@ -1161,6 +1182,7 @@ def build_scorer(
             judge_provider=judge_provider,
             judge_api_key=judge_api_key,
             vote_strategy=vote_strategy,
+            judge_base_url=judge_base_url,
         )
 
     voters = list(heuristic_voters) + ([judge] if judge is not None else [])
