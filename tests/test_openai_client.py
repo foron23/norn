@@ -360,3 +360,21 @@ def test_retry_disabled_with_single_attempt(client, model_config):
     with patcher, pytest.raises(RuntimeError, match="HTTP 429"):
         single.chat(model_config, "hello")
     assert fake.post.call_count == 1
+
+
+def test_null_content_normalises_to_empty_string(client, model_config):
+    """A null content (refusal or tool-call-only reply) becomes ''.
+
+    Found live on the OpenCode relay: glm-5.3 answered a probe with
+    ``"content": null`` and the caller crashed on ``.strip()``.
+    """
+    response = httpx.Response(200, json={
+        "choices": [{"message": {"role": "assistant", "content": None}}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 1},
+    })
+    patcher, _ = _patch_client(response)
+    with patcher:
+        text, _tokens_in, _tokens_out, _latency, _tools, _meta = client.chat(
+            model_config, "hello"
+        )
+    assert text == ""

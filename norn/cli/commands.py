@@ -225,7 +225,7 @@ def probe_model(
             f"[green]Probe OK[/green] · {tokens_in} in / {tokens_out} out · "
             f"{latency_ms:.0f} ms"
         )
-        console.print(Panel(_trunc(response.strip() or "(empty)"), title=model))
+        console.print(Panel(_trunc((response or "").strip() or "(empty)"), title=model))
     except typer.Exit:
         raise
     except Exception as e:  # noqa: BLE001 - any failure is the probe's answer

@@ -199,7 +199,10 @@ class OpenAICompatibleClient:
             )
 
         message = choices[0].get("message", {})
-        response_text = message.get("content", "")
+        # Some servers send `"content": null` (relay models that answer with
+        # tool calls only, or refusals). Normalise to "" so callers can rely on
+        # a string (found live on glm-5.3 through the OpenCode relay).
+        response_text = message.get("content") or ""
         tool_calls_raw = message.get("tool_calls", [])
         usage = parsed.get("usage", {})
         tokens_in = usage.get("prompt_tokens", 0)
