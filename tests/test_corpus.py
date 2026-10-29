@@ -1,7 +1,7 @@
 """NOR-03: balanced corpus tests.
 
 Covers the acceptance criteria:
-  - load_probes("L1") returns >=30% benign variants and ~15% borderline.
+  - _legacy_probes("L1") returns >=30% benign variants and ~15% borderline.
   - A campaign with benign_ratio=0.4 yields a 40/60 benign/harmful
     proportion (documented rounding).
   - Clean/attack pairs share a task_id (TDS base).
@@ -10,11 +10,23 @@ Covers the acceptance criteria:
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from norn.domain.models import CampaignConfig
 from norn.persistence.database import CampaignRepository
 from norn.runtime.campaign import load_probes, plan_campaign
+
+ROOT = Path(__file__).resolve().parent.parent
+
+# NOR-31: the crossed corpus is the default now. Everything in this file
+# describes the v1 corpus, so it pins the legacy root explicitly.
+LEGACY_L1 = ROOT / "norn" / "corpus" / "l1"
+
+
+def _legacy_probes(layer: str = "L1") -> list[dict]:
+    return load_probes(layer, corpus_dir=ROOT / "norn" / "corpus" / layer.lower())
 
 
 def _split_counts(probes: list[dict]) -> dict[str, int]:
@@ -31,7 +43,7 @@ def _split_counts(probes: list[dict]) -> dict[str, int]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def test_l1_corpus_has_at_least_30_percent_benign():
-    counts = _split_counts(load_probes("L1"))
+    counts = _split_counts(_legacy_probes("L1"))
     total = sum(counts.values())
     assert total > 0
     benign_share = counts.get("benign", 0) / total
@@ -39,7 +51,7 @@ def test_l1_corpus_has_at_least_30_percent_benign():
 
 
 def test_l1_corpus_has_about_15_percent_borderline():
-    counts = _split_counts(load_probes("L1"))
+    counts = _split_counts(_legacy_probes("L1"))
     total = sum(counts.values())
     assert total > 0, "corpus vacío: no se puede calcular la proporción"
     borderline_share = counts.get("borderline", 0) / total
@@ -50,7 +62,7 @@ def test_l1_corpus_has_about_15_percent_borderline():
 
 def test_all_variants_have_task_id():
     for layer in ("L1", "L2", "L3"):
-        for probe in load_probes(layer):
+        for probe in _legacy_probes(layer):
             for variant in probe.get("variants", []):
                 assert variant.get("task_id"), f"missing task_id in {layer}: {probe.get('id')}"
 
@@ -61,7 +73,7 @@ def test_clean_attack_pairs_share_task_id():
 
     by_task: dict[str, set[str]] = defaultdict(set)
     for layer in ("L1", "L2"):
-        for probe in load_probes(layer):
+        for probe in _legacy_probes(layer):
             for variant in probe.get("variants", []):
                 task = variant.get("task_id")
                 assert task, f"missing task_id in {layer}: {probe.get('id')} ({variant.get('variant_type')})"
@@ -90,6 +102,7 @@ def _l1_config(**overrides) -> CampaignConfig:
         layer="L1",
         replicas_per_case=1,
         max_turns=1,
+        corpus_dir=str(LEGACY_L1),
         **overrides,
     )
 
@@ -122,7 +135,7 @@ def test_plan_without_benign_ratio_keeps_everything(in_memory_db):
         split: sum(1 for c in cases if c["split"] == split)
         for split in ("benign", "borderline", "harmful")
     }
-    assert counts == _split_counts(load_probes("L1"))
+    assert counts == _split_counts(_legacy_probes("L1"))
 
 
 def test_plan_with_benign_ratio_keeps_techniques(in_memory_db):
@@ -138,7 +151,7 @@ def test_plan_with_benign_ratio_keeps_techniques(in_memory_db):
     # Expected harmful count from the corpus itself (survives corpus edits).
     expected_harmful = sum(
         1
-        for probe in load_probes("L1")
+        for probe in _legacy_probes("L1")
         if probe.get("technique_id") in techniques
         for variant in probe.get("variants", [])
         if variant.get("split", "harmful") == "harmful"
@@ -163,7 +176,7 @@ def test_balance_is_deterministic(in_memory_db):
 
 def test_l1_corpus_has_at_least_80_adversarial_variants():
     """NOR-16 acceptance: load_probes('L1') loads >=80 adversarial variants."""
-    probes = load_probes("L1")
+    probes = _legacy_probes("L1")
     harmful = sum(
         1 for p in probes for v in p.get("variants", [])
         if v.get("split", "harmful") == "harmful"
@@ -176,7 +189,7 @@ def test_all_l1_techniques_have_at_least_one_probe():
     from norn.domain.taxonomy import ATTACK_TECHNIQUES
 
     l1_techniques = {tid for tid, t in ATTACK_TECHNIQUES.items() if t.layer == "L1"}
-    probes = load_probes("L1")
+    probes = _legacy_probes("L1")
     covered = {p.get("technique_id") for p in probes}
     missing = l1_techniques - covered
     assert not missing, f"L1 techniques without probes: {sorted(missing)}"
@@ -184,7 +197,7 @@ def test_all_l1_techniques_have_at_least_one_probe():
 
 def test_new_variants_carry_source_and_date():
     """NOR-16 acceptance: variants seeded from Pliny/PIT carry source + date."""
-    probes = load_probes("L1")
+    probes = _legacy_probes("L1")
     seeded = [
         (p.get("technique_id"), v.get("variant_type"))
         for p in probes
@@ -210,7 +223,7 @@ def test_pliny_carriers_retargeted_not_verbatim():
     carrier (the technique) and ARE expected in some variants. What must NOT
     appear are the original harmful queries from L1B3RT4S payloads (e.g. the
     CURSOR/OPENAI embedded exploits) — those are retargeted to {Z}."""
-    probes = load_probes("L1")
+    probes = _legacy_probes("L1")
     harmful_contents = " ".join(
         v.get("content", "")
         for p in probes

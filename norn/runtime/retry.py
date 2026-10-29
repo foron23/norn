@@ -14,8 +14,14 @@ import time
 
 import httpx
 
-# HTTP status codes safe to retry: rate limit + transient server errors.
-RETRYABLE_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+# HTTP status codes safe to retry: rate limit, relay throttling and transient
+# server errors. 403 is in the list because Cloudflare-fronted relays (OpenCode
+# Go) answer 403 when they throttle a client; a credential problem comes back as
+# 401, which stays non-retryable.
+RETRYABLE_STATUS_CODES = frozenset({403, 429, 500, 502, 503, 504})
+
+# 403 throttling needs a longer cool-down than a 429 with Retry-After.
+THROTTLE_MIN_DELAY_SECONDS = 5.0
 
 # Exponential backoff delays per attempt (0-based): 1s, 2s, 4s.
 RETRY_BACKOFF_SECONDS = (1.0, 2.0, 4.0)
@@ -78,6 +84,9 @@ def with_retry(request_fn, *, attempts: int = DEFAULT_RETRY_ATTEMPTS) -> httpx.R
         last_resp = request_fn()
         if last_resp.status_code not in RETRYABLE_STATUS_CODES or attempt >= attempts - 1:
             return last_resp
-        time.sleep(parse_retry_after(last_resp, backoff_delay(attempt)))
+        delay = parse_retry_after(last_resp, backoff_delay(attempt))
+        if last_resp.status_code == 403:
+            delay = max(delay, THROTTLE_MIN_DELAY_SECONDS)
+        time.sleep(delay)
     assert last_resp is not None
     return last_resp

@@ -143,12 +143,21 @@ def test_load_probes_reads_the_v2_corpus_dir():
     assert {p["technique_id"] for p in crossed} >= {"L1_AT_12", "L1_AT_13", "L1_AT_14"}
 
 
-def test_default_corpus_is_untouched_by_v2():
-    """The v1 corpus must keep loading the same 148 variants (v2 stays out)."""
+def test_default_corpus_is_the_crossed_one():
+    """NOR-31: since 2026-10-30 the crossed corpus is the official L1 corpus."""
     from norn.runtime.campaign import load_probes
 
     variants = _variants(load_probes("L1"))
-    assert len(variants) == 148
+    assert len(variants) == 340
+    assert sum(1 for v in variants if v["split"] == "benign") == 40
+
+
+def test_legacy_corpus_is_still_reachable():
+    """The v1 corpus is not deleted: it is loaded through corpus_dir."""
+    from norn.runtime.campaign import load_probes
+
+    legacy = ROOT / "norn" / "corpus" / "l1"
+    assert len(_variants(load_probes("L1", corpus_dir=legacy))) == 148
 
 
 def test_explicit_corpus_dir_does_not_synthesize_fallback_cases(tmp_path):

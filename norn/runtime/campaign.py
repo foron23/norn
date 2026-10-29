@@ -49,6 +49,14 @@ class ReplicaDetailCallback(Protocol):
     def __call__(self, detail: ReplicaDetail) -> None: ...
 
 
+# NOR-31: the official L1 corpus is the crossed objective x carrier corpus.
+# The v1 corpus (148 variants) stays on disk and is reachable through
+# ``corpus_dir`` — nothing is deleted, only the default changes.
+DEFAULT_CORPUS_DIRS: dict[str, Path] = {
+    "L1": Path(__file__).resolve().parent.parent / "corpus" / "l1" / "adversarial" / "v2" / "crossed",
+}
+
+
 def load_probes(layer: str, corpus_dir: str | Path | None = None) -> list[dict]:
     """Load probe payloads from the corpus directory.
 
@@ -66,7 +74,10 @@ def load_probes(layer: str, corpus_dir: str | Path | None = None) -> list[dict]:
     corpus_root = (
         Path(corpus_dir).expanduser()
         if corpus_dir
-        else Path(__file__).resolve().parent.parent / "corpus" / layer.lower()
+        else DEFAULT_CORPUS_DIRS.get(
+            layer.upper(),
+            Path(__file__).resolve().parent.parent / "corpus" / layer.lower(),
+        )
     )
 
     if corpus_root.exists():

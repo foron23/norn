@@ -221,7 +221,13 @@ single layer with `norn show-taxonomy -l L1`.
 
 ### Probes
 
-Default adversarial payloads live in `norn/corpus/{layer}/adversarial/probes.json`.
+Default adversarial payloads live in `norn/corpus/{layer}/adversarial/`. For L1 the default is the
+**crossed corpus** (objective x carrier, 10 objectives x 6 carrier families x 5 variants = 300 harmful
+cases + 40 controls) under `norn/corpus/l1/adversarial/v2/crossed/`; the pre-2026-10 corpus (148
+variants) is still on disk and is selected with `corpus_dir: "norn/corpus/l1"`. Both are regenerated
+by `scripts/build_corpus_v2.py` (deterministic, `--check` fails when the JSON drifts).
+Crossed variants carry `objective_id`, `carrier_family` and `variant_index` in the case metadata, so
+per-cell ASR and paired comparisons can be computed from the database alone.
 Each probe carries `variants` tagged with a `split` (`harmful`, `benign`, `borderline`)
 which drives FAR/FRR computation. You can override the corpus by placing JSON files in a
 `norn/corpus/{layer}/adversarial/` directory; otherwise the built-in fallback catalog is used.
