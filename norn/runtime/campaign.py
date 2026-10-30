@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Protocol
 
@@ -300,12 +302,38 @@ def _validate_ollama_connection(model_config: ModelConfig) -> None:
         pass  # Non-fatal
 
 
+class _LockedRepo:
+    """Serialise repository calls on one sqlite connection (NOR-38).
+
+    The runner's parallel mode keeps the network phase in threads but every DB
+    touch goes through this proxy, so the single connection stays valid — and
+    in-memory databases, which cannot be shared across connections, keep
+    working. Attribute reads (e.g. ``repo.conn``) pass through untouched.
+    """
+
+    def __init__(self, repo, lock: threading.Lock):
+        self._repo = repo
+        self._lock = lock
+
+    def __getattr__(self, name: str):
+        attr = getattr(self._repo, name)
+        if not callable(attr):
+            return attr
+
+        def _locked(*args, **kwargs):
+            with self._lock:
+                return attr(*args, **kwargs)
+
+        return _locked
+
+
 def run_campaign(
     db: Database,
     campaign_id: int,
     *,
     progress_callback: ProgressCallback | None = None,
     detail_callback: ReplicaDetailCallback | None = None,
+    concurrency: int = 1,
 ) -> RunSummary:
     """Phase 2: Execute test cases, interact with model, score responses.
 
@@ -336,32 +364,37 @@ def run_campaign(
 
     repo.update_state(campaign_id, CampaignState.RUNNING)
 
-    def _record_judge_call(replica_id, prompt, response, tokens_in, tokens_out, latency_ms,
-                           model_name: str | None = None):
-        """NOR-07: persist judge LLM calls as turn_event rows (role='judge').
+    def _build_scorer_for(repo_):
+        """Scorer bound to ``repo_`` (NOR-38: one per thread, same rules)."""
 
-        NOR-19: ``model_name`` (judge ensemble) names the judge model so
-        cost estimation attributes per-model prices.
-        """
-        repo.insert_turn_event(
-            replica_id=replica_id, turn=-1, prompt=prompt, response=response,
-            tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms,
-            role="judge", model=model_name,
+        def _record_judge_call(replica_id, prompt, response, tokens_in, tokens_out,
+                               latency_ms, model_name: str | None = None):
+            """NOR-07: persist judge LLM calls as turn_event rows (role='judge').
+
+            NOR-19: ``model_name`` (judge ensemble) names the judge model so
+            cost estimation attributes per-model prices.
+            """
+            repo_.insert_turn_event(
+                replica_id=replica_id, turn=-1, prompt=prompt, response=response,
+                tokens_in=tokens_in, tokens_out=tokens_out, latency_ms=latency_ms,
+                role="judge", model=model_name,
+            )
+
+        return build_scorer(
+            scoring_mode,
+            vote_strategy,
+            verifiers=config.scoring.verifiers,
+            judge_provider=config.scoring.judge_provider,
+            judge_model=config.scoring.judge_model,
+            judge_models=config.scoring.judge_models,
+            judge_sample_rate=config.scoring.judge_sample_rate,
+            judge_api_key=base_model_config.api_key,
+            judge_base_url=config.scoring.judge_base_url,
+            rules_file=config.scoring.rules_file,
+            judge_recorder=_record_judge_call,
         )
 
-    scorer = build_scorer(
-        scoring_mode,
-        vote_strategy,
-        verifiers=config.scoring.verifiers,
-        judge_provider=config.scoring.judge_provider,
-        judge_model=config.scoring.judge_model,
-        judge_models=config.scoring.judge_models,
-        judge_sample_rate=config.scoring.judge_sample_rate,
-        judge_api_key=base_model_config.api_key,
-        judge_base_url=config.scoring.judge_base_url,
-        rules_file=config.scoring.rules_file,
-        judge_recorder=_record_judge_call,
-    )
+    scorer = _build_scorer_for(repo)
     test_cases = repo.get_test_cases(campaign_id)
 
     provider_name = base_model_config.provider  # defaults to "ollama"
@@ -375,6 +408,14 @@ def run_campaign(
     if use_agent_loop:
         # NOR-13: declarative tools_file (add-only) extends the lab defaults.
         executor = ToolExecutor(config.tools, tools_file=config.tools_file)
+
+    # NOR-38: the L3 tool executor keeps per-run state (sandbox, call log), so
+    # concurrency stays available for the request-level corpora only.
+    if concurrency > 1 and use_agent_loop:
+        console.print(
+            "[yellow]concurrency ignored:[/yellow] the L3 tool executor is stateful — running sequentially"
+        )
+        concurrency = 1
 
     # Pre-flight: warn if model is not known to Ollama (Ollama-only check)
     if provider_name == "ollama":
@@ -406,8 +447,15 @@ def run_campaign(
             overrides["system_prompt"] = arm.system_prompt
         return base_model_config.model_copy(update=overrides)
 
-    def _run_replica_batch(arm, temp: float | None = None) -> None:
-        """Execute every test case × replica for one arm × temperature."""
+    counter_lock = threading.Lock()
+
+    def _run_slice(arm, temp, cases, repo, metrics_repo, scoring_repo, client, scorer) -> None:
+        """Execute a slice of cases for one arm × temperature (NOR-38).
+
+        The body is unchanged from the sequential runner. What changed is that
+        the repositories, the provider and the scorer arrive as arguments, so
+        the same code can run inside a worker thread with locked proxies.
+        """
         nonlocal total_replicas, failed
         arm_name = arm.name if arm is not None else None
         model_config = _resolve_arm_model(arm)
@@ -416,17 +464,7 @@ def run_campaign(
         if temp is not None:
             model_config = model_config.model_copy(update={"temperature": temp})
 
-        for case_dict in test_cases:
-            case = CaseDescriptor(
-                case_id=case_dict["case_id"],
-                technique_id=case_dict["technique_id"],
-                payload=case_dict["payload"],
-                split=DataSplit(case_dict.get("split", "harmful")),
-                layer=layer,
-                turns=json.loads(case_dict.get("metadata_json", "{}")).get("turns", []),
-                metadata=json.loads(case_dict.get("metadata_json", "{}")),
-            )
-
+        for case in cases:
             for r in range(replicas_per_case):
                 replica_id = repo.insert_replica(
                     campaign_id, case.case_id, r,
@@ -472,10 +510,12 @@ def run_campaign(
                     )
 
                     repo.update_replica_state(replica_id, "completed")
-                    total_replicas += 1
+                    with counter_lock:
+                        total_replicas += 1
+                        done_so_far = total_replicas
 
                     if progress_callback is not None:
-                        progress_callback(total_replicas, total_expected, case.technique_id, case.case_id)
+                        progress_callback(done_so_far, total_expected, case.technique_id, case.case_id)
 
                     # NOR-29: live verbose detail (data already in scope above)
                     if detail_callback is not None:
@@ -503,25 +543,72 @@ def run_campaign(
                     error_messages.append(error_msg)
                     repo.update_replica_state(replica_id, "failed", error_message=error_msg)
                     console.print(f"[red]Connection failed:[/red] {error_msg}")
-                    failed += 1
+                    with counter_lock:
+                        failed += 1
                 except TimeoutError as e:
                     error_msg = str(e)
                     error_messages.append(error_msg)
                     repo.update_replica_state(replica_id, "failed", error_message=error_msg)
                     console.print(f"[red]Request timed out:[/red] {error_msg}")
-                    failed += 1
+                    with counter_lock:
+                        failed += 1
                 except RuntimeError as e:
                     error_msg = str(e)
                     error_messages.append(error_msg)
                     repo.update_replica_state(replica_id, "failed", error_message=error_msg)
                     console.print(f"[red]{provider_name} error:[/red] {error_msg}")
-                    failed += 1
+                    with counter_lock:
+                        failed += 1
                 except Exception as e:
                     error_msg = f"Unexpected error: {e}"
                     error_messages.append(error_msg)
                     repo.update_replica_state(replica_id, "failed", error_message=error_msg)
                     console.print(f"[red]Unexpected error (replica {r}):[/red] {error_msg}")
-                    failed += 1
+                    with counter_lock:
+                        failed += 1
+
+    def _run_replica_batch(arm, temp: float | None = None) -> None:
+        """Execute every test case × replica for one arm × temperature."""
+        cases = [
+            CaseDescriptor(
+                case_id=cd["case_id"],
+                technique_id=cd["technique_id"],
+                payload=cd["payload"],
+                split=DataSplit(cd.get("split", "harmful")),
+                layer=layer,
+                turns=json.loads(cd.get("metadata_json", "{}")).get("turns", []),
+                metadata=json.loads(cd.get("metadata_json", "{}")),
+            )
+            for cd in test_cases
+        ]
+
+        if concurrency <= 1:
+            _run_slice(arm, temp, cases, repo, metrics_repo, scoring_repo, client, scorer)
+            return
+
+        # NOR-38: threads for the network phase, one lock for the sqlite writes.
+        db_lock = threading.Lock()
+        p_repo = _LockedRepo(repo, db_lock)
+        p_metrics = _LockedRepo(metrics_repo, db_lock)
+        p_scoring = _LockedRepo(scoring_repo, db_lock)
+        local = threading.local()
+
+        # Round-robin: cases range from a 200-token prompt to a 4k-token one,
+        # so contiguous chunks would hand one thread all the cheap work.
+        chunks: list[list[CaseDescriptor]] = [[] for _ in range(concurrency)]
+        for i, case in enumerate(cases):
+            chunks[i % concurrency].append(case)
+
+        def _worker(chunk: list[CaseDescriptor]) -> None:
+            if not hasattr(local, "client"):
+                local.client = build_provider(provider_name)
+                local.scorer = _build_scorer_for(p_repo)
+            _run_slice(arm, temp, chunk, p_repo, p_metrics, p_scoring, local.client, local.scorer)
+
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = [pool.submit(_worker, chunk) for chunk in chunks if chunk]
+            for future in as_completed(futures):
+                future.result()
 
     for arm in arms:
         for temp in temps:

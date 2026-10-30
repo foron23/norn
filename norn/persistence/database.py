@@ -30,8 +30,13 @@ class Database:
         self.conn: sqlite3.Connection | None = None
 
     def connect(self) -> sqlite3.Connection:
-        self.conn = sqlite3.connect(self.db_path)
+        # NOR-38: the parallel runner shares one connection across worker
+        # threads (sqlite connections are bound to their creating thread by
+        # default). Safety comes from the runner's write lock, plus WAL for
+        # readers — not from the thread check.
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.row_factory = sqlite3.Row
         return self.conn
