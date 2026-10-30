@@ -25,7 +25,7 @@ CROSSED = V2_DIR / "crossed" / "probes_v2.json"
 INPUT_SIDE = V2_DIR / "input_side" / "probes_v2b_input.json"
 
 FAMILIES = {
-    "prefill", "format_contract", "regime_divider", "refusal_denylist",
+    "prefill_text", "format_contract", "regime_divider", "refusal_denylist",
     "scaffold_hijack", "semantic_reframe", "stacked",
 }
 OBJECTIVES = {
