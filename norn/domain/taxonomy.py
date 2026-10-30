@@ -209,6 +209,42 @@ ATTACK_TECHNIQUES: Final = {
         mitre_atlas=["AML.T0051"],
     ),
 
+    # ── L1 AT_21..24: policy-bypass corpus (NOR-37) ──
+    # A policy binds an identity, a turn and a channel; each technique moves one
+    # lever. See docs/POLICY_BYPASS_SPEC.md.
+    "L1_AT_21": AttackTechnique(
+        id="L1_AT_21",
+        name="Policy-Document Spoofing (Policy Puppetry)",
+        layer="L1",
+        description="Deliver a forged policy artifact (XML/YAML bundle, config diff, signed directive) that declares the safety rule superseded and the request in scope. Exploits deference to the policy register: the format carries more authority than the user turn containing it",
+        owasp=["LLM01", "LLM07"],
+        mitre_atlas=["AML.T0051", "AML.T0054"],
+    ),
+    "L1_AT_22": AttackTechnique(
+        id="L1_AT_22",
+        name="Forged Conversation History",
+        layer="L1",
+        description="Fabricate a prior assistant turn that already accepted and started the answer, then ask the model to continue it. The commitment lives in the transcript, so the decision is not taken in the turn being generated — same lever as L1_AT_12, with the mass of a finished exchange",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051", "AML.T0054"],
+    ),
+    "L1_AT_23": AttackTechnique(
+        id="L1_AT_23",
+        name="Context Dilution / Policy Fade",
+        layer="L1",
+        description="State the policy first, then bury the request at the end of thousands of benign tokens. Attention over a long context dilutes the policy's weight and the last instruction wins. Length is a campaign parameter (filler_tokens), not a property of the request",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051"],
+    ),
+    "L1_AT_24": AttackTechnique(
+        id="L1_AT_24",
+        name="Encoded Objective (Carrier Blindness)",
+        layer="L1",
+        description="The harmful request never appears in plaintext: it arrives base64/rot13/hex-encoded with an instruction to decode and execute. Policy and input classifier read ciphertext; the model reconstructs the intent itself before deciding. Distinct from L1_AT_15/16, which perturb the surface of a visible request",
+        owasp=["LLM01"],
+        mitre_atlas=["AML.T0051"],
+    ),
+
     # ── L2: RAG Systems ──
     "L2_AT_01": AttackTechnique(
         id="L2_AT_01",
@@ -376,6 +412,10 @@ TECHNIQUE_MAP: Final = {
     "L1_AT_18": {"owasp": "LLM10", "mitre": "AML.T0043"},
     "L1_AT_19": {},
     "L1_AT_20": {"owasp": "LLM01", "mitre": "AML.T0051"},
+    "L1_AT_21": {"owasp": "LLM07", "mitre": "AML.T0054"},
+    "L1_AT_22": {"owasp": "LLM01", "mitre": "AML.T0054"},
+    "L1_AT_23": {"owasp": "LLM01", "mitre": "AML.T0051"},
+    "L1_AT_24": {"owasp": "LLM01", "mitre": "AML.T0051"},
     "L2_AT_01": {"owasp": "LLM01", "mitre": "AML.T0051.001"},
     "L2_AT_02": {"owasp": "LLM04", "mitre": "AML.T0070"},
     "L2_AT_03": {"owasp": "LLM08", "mitre": "AML.T0064"},

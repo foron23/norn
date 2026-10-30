@@ -54,6 +54,11 @@ NORn_TO_PIT: dict[str, list[str]] = {
     "L1_AT_18": ["PIT-T-55", "PIT-T-04"],                    # Context Overflow / Cognitive Overload
     "L1_AT_19": ["PIT-T-27", "PIT-T-21"],                    # Urgency / Reiteration (amplifier)
     "L1_AT_20": ["PIT-T-40", "PIT-T-39", "PIT-T-36"],        # AutoDAN / Fuzzing / Distraction Sandwich
+    # NOR-37: policy-bypass corpus (identity / turn / channel)
+    "L1_AT_21": ["PIT-T-34"],                                 # Policy-File Framing
+    "L1_AT_22": ["PIT-T-31"],                                 # History Fabrication (fake assistant turn)
+    "L1_AT_23": ["PIT-T-55", "PIT-T-04"],                     # Context Overflow / Cognitive Overload
+    "L1_AT_24": ["PIT-E-07", "PIT-E-01", "PIT-E-30"],         # Encoding suite (request never in plaintext)
     # ── L2 ──
     "L2_AT_01": ["PIT-T-45", "PIT-T-32", "PIT-T-12"],        # Prompt Worm / Echo Chamber / Link Injection
     "L2_AT_02": ["PIT-T-64"],                                # Retrieval Ranking Manipulation
