@@ -229,6 +229,14 @@ regenera `scripts/build_corpus_v2.py` (determinista; `--check` falla si el JSON 
 Las variantes cruzadas llevan `objective_id`, `carrier_family` y `variant_index` en los metadatos del
 caso, así que el ASR por celda y las comparaciones pareadas se calculan desde la base de datos.
 
+Una distinción que el corpus no puede llevar, y que ahora dicen los nombres de familia: el **canal de
+entrega**. `prefill_text` es la forma instruida — el caso *pide* al modelo que abra con una frase — así
+que mide tanto el seguimiento de instrucciones como el mecanismo. La forma nativa (un turno de asistente
+ya comprometido antes de que el modelo ejecute) es `CampaignConfig.prefill`, un ajuste de campaña, así que
+se compara campaña contra campaña y no como otra familia: mismo modelo, mismos 50 casos, instruido 0/50
+frente a nativo 16/50 en la calibración de v3. El JSON exportado de la campaña guarda `config.prefill`,
+que es lo que distingue los dos brazos.
+
 El mismo generador produce tres conjuntos derivados, que se eligen con `corpus_dir`:
 
 - `v2/screen` — variante 1 de cada celda + controles (110 casos): comparar muchos modelos barato.
