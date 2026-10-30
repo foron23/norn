@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from norn.domain.taxonomy import ATTACK_TECHNIQUES, TECHNIQUE_MAP, AttackTechnique
 
-L1_TECHNIQUE_COUNT = 20  # 10 originales + 10 nuevas (L1_AT_11..20)
-TOTAL_TECHNIQUE_COUNT = 26  # 20 L1 + 3 L2 + 3 L3
+L1_TECHNIQUE_COUNT = 24  # 10 originales + 10 nuevas (L1_AT_11..20) + 4 policy-bypass (AT_21..24)
+TOTAL_TECHNIQUE_COUNT = 30  # 24 L1 + 3 L2 + 3 L3
 
 
 def test_attack_techniques_count_per_layer():

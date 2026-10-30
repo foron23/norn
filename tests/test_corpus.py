@@ -185,12 +185,23 @@ def test_l1_corpus_has_at_least_80_adversarial_variants():
 
 
 def test_all_l1_techniques_have_at_least_one_probe():
-    """NOR-16 acceptance: every L1 technique (incl. L1_AT_11..20) has a probe."""
+    """NOR-16 acceptance: every L1 technique has a probe somewhere in the shipped corpora.
+
+    NOR-37 ships the policy-bypass families (L1_AT_21..24) as a separate corpus
+    (``adversarial/v3``) so the default corpus keeps its size and its metrics. A
+    technique is covered when it has a probe in the default corpus *or* in a
+    corpus that ships in the repository — not when it exists only on paper.
+    """
     from norn.domain.taxonomy import ATTACK_TECHNIQUES
 
     l1_techniques = {tid for tid, t in ATTACK_TECHNIQUES.items() if t.layer == "L1"}
     probes = _legacy_probes("L1")
     covered = {p.get("technique_id") for p in probes}
+
+    v3 = ROOT / "norn" / "corpus" / "l1" / "adversarial" / "v3"
+    assert v3.exists(), "policy-bypass corpus (v3) is missing"
+    covered |= {p.get("technique_id") for p in load_probes("L1", corpus_dir=v3)}
+
     missing = l1_techniques - covered
     assert not missing, f"L1 techniques without probes: {sorted(missing)}"
 
