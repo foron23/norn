@@ -1,0 +1,50 @@
+# Norn Campaign Configuration — OpenCode relay (NOR-30)
+#
+# Requires a credential for the relay in the environment:
+#   export OPENCODE_GO_API_KEY=...      # provider: opencode-go
+#   export OPENCODE_ZEN_API_KEY=...     # provider: opencode-zen
+#
+# Only models served through /v1/chat/completions are supported
+# (deepseek-*, glm-*, kimi-*). Models on /v1/messages or /v1/responses are
+# rejected with an explicit error. Check one model first:
+#   norn probe-model --provider opencode-go --model deepseek-v4.1-flash
+
+campaign_name: "L1 audit - OpenCode Go (DeepSeek V4.1 Flash)"
+layer: "L1"
+description: "Standalone LLM audit through the OpenCode Go relay"
+
+model:
+  provider: "opencode-go"
+  base_url: "https://opencode.ai/zen/go/v1"
+  model_name: "deepseek-v4.1-flash"
+  temperature: 0.0
+  top_p: 0.9
+  max_tokens: 1024
+  timeout: 240.0
+  # api_key: set in the environment (OPENCODE_GO_API_KEY), not here.
+  # Optional relay headers (session affinity is derived automatically):
+  # extra_headers:
+  #   x-opencode-session: "my-stable-campaign-id"
+
+scoring:
+  mode: "heuristic"
+
+replicas_per_case: 3
+max_turns: 1
+
+techniques:
+  - "L1_AT_01"
+  - "L1_AT_06"
+  - "L1_AT_12"
+
+metrics:
+  - "L1_ME_01"
+  - "L1_ME_02"
+  - "L1_ME_03"
+
+export:
+  output_dir: "./norn_exports"
+  formats:
+    - "html"
+    - "json"
+    - "csv"

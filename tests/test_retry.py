@@ -87,3 +87,39 @@ def test_client_constructors_reject_invalid_retry_attempts():
         OpenAICompatibleClient(retry_attempts=0)
     with pytest.raises(ValueError, match="retry_attempts must be >= 1"):
         OllamaClient(retry_attempts=0)
+
+
+def test_with_retry_retries_403_throttling(monkeypatch):
+    """A relay 403 is throttling, not auth: it must be retried (NOR-31)."""
+    import norn.runtime.retry as retry_mod
+
+    sleeps = []
+    monkeypatch.setattr(retry_mod.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+
+    def request_fn():
+        calls["n"] += 1
+        return httpx.Response(200 if calls["n"] == 2 else 403)
+
+    resp = retry_mod.with_retry(request_fn, attempts=3)
+    assert resp.status_code == 200
+    assert calls["n"] == 2
+    assert sleeps and sleeps[0] >= retry_mod.THROTTLE_MIN_DELAY_SECONDS
+
+
+def test_with_retry_does_not_retry_401(monkeypatch):
+    """A 401 is a credential problem and stays non-retryable."""
+    import norn.runtime.retry as retry_mod
+
+    sleeps = []
+    monkeypatch.setattr(retry_mod.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"n": 0}
+
+    def request_fn():
+        calls["n"] += 1
+        return httpx.Response(401)
+
+    resp = retry_mod.with_retry(request_fn, attempts=3)
+    assert resp.status_code == 401
+    assert calls["n"] == 1
+    assert sleeps == []

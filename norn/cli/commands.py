@@ -28,11 +28,14 @@ from rich.table import Table
 from rich.text import Text
 
 from norn.domain.models import (
+    _OPENCODE_KEY_ENV,
     CampaignConfig,
     CampaignState,
+    ModelConfig,
     ReplicaDetail,
     RunSummary,
     ScoringDecision,
+    _opencode_family,
 )
 from norn.domain.taxonomy import (
     ATTACK_TECHNIQUES,
@@ -56,6 +59,8 @@ from norn.runtime.campaign import plan_campaign as _plan_campaign
 from norn.runtime.campaign import run_campaign as _run_campaign
 from norn.runtime.chain import load_chain_config
 from norn.runtime.chain import run_chain as _run_chain
+from norn.runtime.opencode_client import CHAT_COMPLETIONS, model_transport
+from norn.runtime.providers import build_provider
 
 console = Console()
 app = typer.Typer(
@@ -152,6 +157,79 @@ def validate_config(
         console.print(table)
     except Exception as e:
         console.print(f"[red]Validation failed:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command("probe-model")
+def probe_model(
+    provider: Annotated[str, typer.Option("--provider", help="Provider: opencode-go, opencode-zen, openai")] = "opencode-go",
+    model: Annotated[str, typer.Option("--model", help="Model id as accepted by the endpoint")] = "",
+    base_url: Annotated[str, typer.Option("--base-url", help="Endpoint base URL (default depends on provider)")] = "",
+    api_key: Annotated[str, typer.Option("--api-key", help="API key (defaults to the provider env var)")] = "",
+    max_tokens: Annotated[int, typer.Option("--max-tokens", help="Max tokens for the probe reply")] = 32,
+    timeout: Annotated[float, typer.Option("--timeout", help="Request timeout in seconds")] = 60.0,
+):
+    """Smoke-test one model with a benign prompt (NOR-30).
+
+    Resolves provider, transport and credential before a campaign exists, so an
+    auth or routing problem surfaces as one diagnostic instead of 150 failed
+    replicas. Sends a single harmless request.
+    """
+    family = _opencode_family(provider)
+    default_base = {
+        "go": "https://opencode.ai/zen/go/v1",
+        "zen": "https://opencode.ai/zen/v1",
+    }.get(family, "")
+    if provider.lower() == "ollama":
+        console.print(
+            "[red]probe-model targets HTTP providers.[/red] "
+            "For Ollama, check the connection with 'norn run-campaign'."
+        )
+        raise typer.Exit(code=1)
+    if not model:
+        console.print("[red]Missing --model.[/red]")
+        raise typer.Exit(code=1)
+
+    resolved_base = base_url or default_base
+    if family:
+        transport = model_transport(provider, model)
+        console.print(f"Relay: [cyan]{provider}[/cyan] · transport: [cyan]{transport}[/cyan]")
+        if transport != CHAT_COMPLETIONS:
+            console.print(
+                f"[red]Unsupported transport:[/red] Norn only implements "
+                f"{CHAT_COMPLETIONS}; '{model}' is served through '{transport}'."
+            )
+            raise typer.Exit(code=1)
+
+    try:
+        model_config = ModelConfig(
+            provider=provider,
+            model_name=model,
+            api_key=api_key or None,
+            max_tokens=max_tokens,
+            timeout=timeout,
+        )
+        if resolved_base:
+            model_config.base_url = resolved_base
+        if family and not model_config.api_key:
+            console.print(
+                f"[red]No credential:[/red] pass --api-key or set "
+                f"{_OPENCODE_KEY_ENV[family]} in the environment."
+            )
+            raise typer.Exit(code=1)
+
+        response, tokens_in, tokens_out, latency_ms, _tools, _meta = build_provider(
+            provider
+        ).chat(model_config, "Reply with the single word: OK")
+        console.print(
+            f"[green]Probe OK[/green] · {tokens_in} in / {tokens_out} out · "
+            f"{latency_ms:.0f} ms"
+        )
+        console.print(Panel(_trunc((response or "").strip() or "(empty)"), title=model))
+    except typer.Exit:
+        raise
+    except Exception as e:  # noqa: BLE001 - any failure is the probe's answer
+        console.print(f"[red]Probe failed:[/red] {e}")
         raise typer.Exit(code=1)
 
 

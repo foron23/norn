@@ -299,6 +299,31 @@ def test_build_scorer_propagates_judge_api_key(monkeypatch):
     assert scorer_no_key.llm_judge._model_config.api_key is None
 
 
+def test_build_scorer_propagates_judge_base_url(monkeypatch):
+    """NOR-30: a judge on a non-OpenAI endpoint gets its base_url."""
+    monkeypatch.setattr(
+        "norn.scoring.scorers.build_provider", lambda name: FakeJudgeProvider()
+    )
+    scorer = build_scorer(
+        "hybrid",
+        judge_provider="opencode-go",
+        judge_model="glm-5.3",
+        judge_base_url="https://opencode.ai/zen/go/v1",
+    )
+    config = scorer.llm_judge._model_config
+    assert config.base_url == "https://opencode.ai/zen/go/v1"
+    assert config.provider == "opencode-go"
+
+
+def test_build_scorer_judge_base_url_defaults_to_openai(monkeypatch):
+    """Without judge_base_url the historical default is untouched."""
+    monkeypatch.setattr(
+        "norn.scoring.scorers.build_provider", lambda name: FakeJudgeProvider()
+    )
+    scorer = build_scorer("hybrid", judge_model="judge-7b")
+    assert scorer.llm_judge._model_config.base_url == "https://api.openai.com/v1"
+
+
 def test_judge_prompt_includes_split():
     """The judge template carries the test case split (benign awareness).
 

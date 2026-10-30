@@ -33,7 +33,7 @@ puedan realizar auditorías de seguridad sobre LLMs fiables y reproducibles.
 ## Características
 
 - **Taxonomía de ataque de tres capas** — 16 técnicas distribuidas en L1 (LLM standalone), L2 (RAG) y L3 (agentes con herramientas), mapeadas a OWASP LLM Top 10 y MITRE ATLAS.
-- **Proveedores conectables** — comunica con una instancia local de [Ollama](https://ollama.com) o cualquier endpoint compatible con OpenAI (API de OpenAI, Ollama `/v1`, vLLM, LM Studio, LocalAI, o una web app de laboratorio propia).
+- **Proveedores conectables** — comunica con una instancia local de [Ollama](https://ollama.com), cualquier endpoint compatible con OpenAI (API de OpenAI, Ollama `/v1`, vLLM, LM Studio, LocalAI, o una web app de laboratorio propia), o el relay de [OpenCode](https://opencode.ai) (Go / Zen) con `provider: "opencode-go"` / `"opencode-zen"`.
 - **Scoring conectable** — reglas heurísticas, juez LLM simulado, o modo híbrido con agregación de voto por mayoría / media ponderada / veto.
 - **Métricas reproducibles** — calculadoras por capa (ASR, FAR/FRR, TTC, PSR@k, TDS, UAR, CTER, KCCR) almacenadas con intervalos de confianza del 95%.
 - **Análisis de kill-chain** — KCCR (Kill-Chain Completion Rate) entre capas para evaluar compromisos extremo a extremo L1→L2→L3.
@@ -75,6 +75,10 @@ Norn no distribuye modelos. Para ejecutar campañas necesitas un endpoint LLM al
   ollama pull llama3.1:8b
   ```
 - **Compatible con OpenAI** — define `provider: "openai"` en tu YAML de campaña y apunta `base_url` a tu endpoint (p. ej. `http://localhost:8085/v1/l1`). Proporciona `api_key` en línea o mediante la variable de entorno `OLLAMA_API_KEY`.
+- **Relay de OpenCode** — define `provider: "opencode-go"` o `"opencode-zen"` y elige un modelo de ese relay. La credencial se lee de `OPENCODE_GO_API_KEY` / `OPENCODE_ZEN_API_KEY`. El relay fija cada conversación a un backend mediante la cabecera `x-opencode-session`, que el driver deriva y envía solo; únicamente se soportan los modelos servidos por `/v1/chat/completions` (deepseek, glm, kimi). Los modelos de `/v1/messages` (claude, qwen, minimax en Go) o `/v1/responses` (gpt, grok, muse-spark) se rechazan con un mensaje explícito. Comprueba un modelo antes de lanzar la campaña:
+  ```bash
+  norn probe-model --provider opencode-go --model deepseek-v4.1-flash
+  ```
 
 ## Inicio Rápido
 
@@ -145,16 +149,17 @@ Las campañas se definen en archivos YAML. Ver `examples/` para configuraciones 
 
 ### Configuración del modelo (`model`)
 
-Norn soporta dos proveedores, seleccionados con el campo `provider`.
+Norn soporta tres proveedores, seleccionados con el campo `provider`.
 
 | Campo | Tipo | Por defecto | Descripción |
-|-------|------|-------------|-------------|
-| `provider` | string | `"ollama"` | `"ollama"` o `"openai"` (no distingue mayúsculas) |
+|-------|------|---------|-------------|
+| `provider` | string | `"ollama"` | `"ollama"`, `"openai"`, `"opencode-go"` o `"opencode-zen"` (no distingue mayúsculas) |
 | `scheme` | string | `"http"` | Esquema de URL (solo Ollama) |
 | `host` | string | `"localhost"` | Host del servidor de modelos (solo Ollama) |
 | `port` | int | `11434` | Puerto del servidor de modelos (solo Ollama) |
-| `base_url` | string | `"https://api.openai.com/v1"` | URL base compatible con OpenAI (proveedor OpenAI) |
-| `api_key` | string \| null | env `OLLAMA_API_KEY` | Bearer token; recurre a la variable de entorno `OLLAMA_API_KEY` |
+| `base_url` | string | `"https://api.openai.com/v1"` | URL base compatible con OpenAI (proveedores OpenAI / OpenCode) |
+| `api_key` | string \| null | env `OLLAMA_API_KEY` | Bearer token; recurre a `OLLAMA_API_KEY` (o `OPENCODE_GO_API_KEY` / `OPENCODE_ZEN_API_KEY` en el relay) |
+| `extra_headers` | dict | `{}` | Cabeceras HTTP extra para el endpoint (afinidad de sesión del relay, etiquetas de proveedor). La cabecera `Authorization` de `api_key` siempre gana |
 | `model_name` | string | `"llama3.1:8b"` | Identificador del modelo según el proveedor |
 | `temperature` | float | `0.0` | Temperatura de muestreo (0.0 = determinista) |
 | `top_p` | float | `0.9` | Umbral de nucleus sampling |
@@ -216,7 +221,29 @@ sola capa con `norn show-taxonomy -l L1`.
 
 ### Probes
 
-Los payloads adversariales por defecto viven en `norn/corpus/{layer}/adversarial/probes.json`.
+Los payloads adversariales por defecto viven en `norn/corpus/{layer}/adversarial/`. En L1 el corpus
+por defecto es el **cruzado** (objetivo x carrier: 10 objetivos x 7 familias de carrier x 5 variantes =
+350 casos harmful + 40 controles) en `norn/corpus/l1/adversarial/v2/crossed/`; el corpus anterior a
+2026-10 (148 variantes) sigue en disco y se selecciona con `corpus_dir: "norn/corpus/l1"`. Los dos los
+regenera `scripts/build_corpus_v2.py` (determinista; `--check` falla si el JSON se desvía).
+Las variantes cruzadas llevan `objective_id`, `carrier_family` y `variant_index` en los metadatos del
+caso, así que el ASR por celda y las comparaciones pareadas se calculan desde la base de datos.
+
+El mismo generador produce tres conjuntos derivados, que se eligen con `corpus_dir`:
+
+- `v2/screen` — variante 1 de cada celda + controles (110 casos): comparar muchos modelos barato.
+- `v2/deep` — variantes 1..3 + controles (250 casos): 30 casos por celda, para comparar familias con
+  un intervalo del 95 % que diga algo.
+- `v2/crescendo` — 10 objetivos x un guion de escalada de tres turnos (el `max_turns` clásico queda
+  intacto: los casos con guion conservan en contexto las respuestas del modelo, los demás siguen
+  repitiendo el payload).
+
+`scripts/import_l1b3rt4s.py` construye un cuarto conjunto desde un clon local de L1B3RT4S
+(`v2/verbatim`, 3 carriers x 10 objetivos). Solo se retargetea el hueco del payload; el carrier es
+byte a byte el de upstream. La salida está en `.gitignore`: se genera en local y el commit de origen
+queda en el `provenance` de cada variante.
+Los modelos que tardan más de dos minutos por respuesta (algunos flash) necesitan `timeout: 240.0` en
+el YAML; con los 120 s por defecto salen réplicas fallidas, no rechazos.
 Cada probe lleva `variants` etiquetadas con un `split` (`harmful`, `benign`, `borderline`)
 que dirige el cálculo de FAR/FRR. Puedes sobrescribir el corpus colocando archivos JSON en un
 directorio `norn/corpus/{layer}/adversarial/`; en caso contrario se usa el catálogo de respaldo integrado.

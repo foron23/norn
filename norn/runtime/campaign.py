@@ -49,26 +49,48 @@ class ReplicaDetailCallback(Protocol):
     def __call__(self, detail: ReplicaDetail) -> None: ...
 
 
-def load_probes(layer: str) -> list[dict]:
+# NOR-31: the official L1 corpus is the crossed objective x carrier corpus.
+# The v1 corpus (148 variants) stays on disk and is reachable through
+# ``corpus_dir`` — nothing is deleted, only the default changes.
+DEFAULT_CORPUS_DIRS: dict[str, Path] = {
+    "L1": Path(__file__).resolve().parent.parent / "corpus" / "l1" / "adversarial" / "v2" / "crossed",
+}
+
+
+def load_probes(layer: str, corpus_dir: str | Path | None = None) -> list[dict]:
     """Load probe payloads from the corpus directory.
 
     Loads every JSON file under ``corpus/<layer>/`` (both the adversarial/
     and benign/ subdirectories) so benign and borderline variants are part
     of the default corpus (NOR-03). Falls back to the builtin catalog when
     the corpus directory is absent.
+
+    ``corpus_dir`` (NOR-31) points at an alternative corpus root — e.g.
+    ``norn/corpus/l1/adversarial/v2`` — so an experiment can plan against the
+    crossed corpus without touching the default one. JSON files sitting
+    directly in that directory are loaded too.
     """
     probes = []
-    corpus_root = Path(__file__).resolve().parent.parent / "corpus" / layer.lower()
+    corpus_root = (
+        Path(corpus_dir).expanduser()
+        if corpus_dir
+        else DEFAULT_CORPUS_DIRS.get(
+            layer.upper(),
+            Path(__file__).resolve().parent.parent / "corpus" / layer.lower(),
+        )
+    )
 
     if corpus_root.exists():
+        files = sorted(corpus_root.glob("*.json"))
         for split_dir in sorted(p for p in corpus_root.iterdir() if p.is_dir()):
-            for f in sorted(split_dir.glob("*.json")):
-                with open(f) as fp:
-                    data = json.load(fp)
-                    if isinstance(data, list):
-                        probes.extend(data)
-                    else:
-                        probes.append(data)
+            files.extend(sorted(split_dir.glob("*.json")))
+        for f in files:
+            with open(f) as fp:
+                data = json.load(fp)
+                if isinstance(data, list):
+                    probes.extend(data)
+                else:
+                    probes.append(data)
     else:
         from norn.probes.catalog import get_default_probes
         probes = get_default_probes(layer)
@@ -150,7 +172,7 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
     repo = CampaignRepository(db)
     campaign_id = repo.insert_campaign(config)
 
-    probes = load_probes(config.layer)
+    probes = load_probes(config.layer, config.corpus_dir)
 
     cases: list[CaseDescriptor] = []
     case_counter = 0
@@ -182,6 +204,14 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
                         "variant_type": variant.get("variant_type", "default"),
                         "probe_source": probe.get("id", ""),
                         "task_id": variant.get("task_id", ""),
+                        # NOR-31: the crossed corpus's analysis keys must survive
+                        # the plan, so per-cell ASR/McNemar can be computed from
+                        # the DB alone.
+                        **{
+                            k: variant[k]
+                            for k in ("objective_id", "objective_domain", "carrier_family", "variant_index")
+                            if k in variant
+                        },
                     },
                 )
                 cases.append(case)
@@ -193,6 +223,11 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
         if config.techniques and tid not in config.techniques:
             continue
         if tid in techniques_seen:
+            continue
+        # NOR-31: an explicit corpus_dir IS the corpus. Synthesizing fallback
+        # cases would add probes the experiment never asked for (8 extra cases
+        # in the v2 plan, one per uncovered technique).
+        if config.corpus_dir:
             continue
 
         # Fallback only for techniques with a known builtin payload (the
@@ -323,6 +358,7 @@ def run_campaign(
         judge_models=config.scoring.judge_models,
         judge_sample_rate=config.scoring.judge_sample_rate,
         judge_api_key=base_model_config.api_key,
+        judge_base_url=config.scoring.judge_base_url,
         rules_file=config.scoring.rules_file,
         judge_recorder=_record_judge_call,
     )
@@ -568,8 +604,25 @@ def _run_simple_replica(
     # lista de mensajes para inyectar el assistant tras el user).
     use_messages = messages is not None or prefill is not None
 
+    # NOR-34: multi-turn escalation (crescendo). When the case carries a script
+    # of turns, each turn sends the model's own previous answer plus the next
+    # user step, so pressure builds across the conversation instead of
+    # repeating the same prompt. Legacy cases (no turns) keep the original
+    # "same payload every turn" behavior untouched.
+    scripted = list(case.turns or [])
+    if scripted:
+        history: list[dict] = []
+        if model_config.system_prompt:
+            history.append({"role": "system", "content": model_config.system_prompt})
+        use_messages = True
+        max_turns = min(max_turns, len(scripted))
+
     for turn in range(max_turns):
-        if use_messages:
+        if scripted:
+            step = scripted[turn].get("content", "")
+            history.append({"role": "user", "content": step})
+            result = client.chat_messages(model_config, history, prefill=None)
+        elif use_messages:
             msgs = messages if messages is not None else [{"role": "user", "content": case.payload}]
             result = client.chat_messages(
                 model_config, msgs,
@@ -584,8 +637,11 @@ def _run_simple_replica(
         if not response or not response.strip():
             response = "(no response)"
 
+        if scripted:
+            history.append({"role": "assistant", "content": response})
+
         repo.insert_turn_event(
-            replica_id, turn, case.payload, response,
+            replica_id, turn, step if scripted else case.payload, response,
             tokens_in=tokens_in,
             tokens_out=tokens_out,
             latency_ms=latency_ms,

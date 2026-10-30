@@ -63,3 +63,6 @@ Thumbs.db
 !.env.example
 *.pem
 *.key
+
+# NOR-33: generated from a third-party checkout, never committed
+norn/corpus/l1/adversarial/v2/verbatim/
