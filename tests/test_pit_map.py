@@ -36,9 +36,12 @@ def test_pit_map_keys_are_valid_techniques():
     mapped = set(data["map"])
     valid = set(ATTACK_TECHNIQUES)
     assert mapped <= valid, f"unknown techniques in pit_map: {mapped - valid}"
-    # every L1 technique (incl. the 10 new NOR-14 ones) has aliases
+    # every L1 technique has aliases, except those with no verified PIT
+    # counterpart (NOR-38: the canary override has no confirmed PIT code, and
+    # an invented alias is worse than a declared gap)
+    NO_PIT_ALIAS = {"L1_AT_25"}
     l1 = {tid for tid, t in ATTACK_TECHNIQUES.items() if t.layer == "L1"}
-    assert l1 <= mapped, f"L1 techniques missing PIT aliases: {l1 - mapped}"
+    assert (l1 - NO_PIT_ALIAS) <= mapped, f"L1 techniques missing PIT aliases: {l1 - mapped}"
 
 
 def test_pit_map_values_are_pit_codes():

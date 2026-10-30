@@ -77,7 +77,7 @@ class VoteStrategy(str, Enum):
 
 # NOR-25: canonical names of the pluggable verifier pipeline. Keep in sync
 # with norn.scoring.scorers._VERIFIER_REGISTRY (guardrail test enforces it).
-KNOWN_VERIFIERS: tuple[str, ...] = ("heuristic_legacy", "heuristic_signals", "judge")
+KNOWN_VERIFIERS: tuple[str, ...] = ("heuristic_legacy", "heuristic_signals", "judge", "canary")
 
 
 # ── Pydantic Configs ─────────────────────────────────────────────────────────
