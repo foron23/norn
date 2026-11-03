@@ -191,6 +191,15 @@ def test_all_l1_techniques_have_at_least_one_probe():
     l1_techniques = {tid for tid, t in ATTACK_TECHNIQUES.items() if t.layer == "L1"}
     probes = _legacy_probes("L1")
     covered = {p.get("technique_id") for p in probes}
+
+    # NOR-38: techniques whose corpus ships as a separate file set (v3 policy
+    # bypass, v4 canaries) still count as covered — the invariant is "has a
+    # probe somewhere in the repo", not "has a probe in the default corpus".
+    for extra in ("v3", "v4"):
+        alt = ROOT / "norn" / "corpus" / "l1" / "adversarial" / extra
+        if alt.exists():
+            covered |= {p.get("technique_id") for p in load_probes("L1", corpus_dir=alt)}
+
     missing = l1_techniques - covered
     assert not missing, f"L1 techniques without probes: {sorted(missing)}"
 

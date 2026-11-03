@@ -360,6 +360,7 @@ def _run_campaign_verbose(
     total: int,
     verbose_level: int,
     console: Console,
+    concurrency: int = 1,
 ) -> RunSummary:
     """NOR-29: run with a Rich Live table of the last 15 replicas (no bar).
 
@@ -408,6 +409,7 @@ def _run_campaign_verbose(
             db, campaign_id,
             progress_callback=on_progress,
             detail_callback=on_detail,
+            concurrency=concurrency,
         )
 
 
@@ -424,6 +426,16 @@ def run_campaign(
             help="Live per-replica table during the run (-v); -vv also shows payload and L3 tool calls.",
         ),
     ] = 0,
+    concurrency: Annotated[
+        int,
+        typer.Option(
+            "--concurrency",
+            "-j",
+            help="Replicas in flight at once (threads; DB writes stay serialised). Default 1.",
+            min=1,
+            max=32,
+        ),
+    ] = 1,
 ):
     """Run (execute) all test cases of a planned campaign."""
     db = Database(db_path)
@@ -441,7 +453,7 @@ def run_campaign(
     total = len(test_cases) * replicas_per_case
 
     if verbose:
-        summary = _run_campaign_verbose(db, campaign_id, total, verbose, console)
+        summary = _run_campaign_verbose(db, campaign_id, total, verbose, console, concurrency=concurrency)
     else:
         with Progress(
             TextColumn(f"[bold cyan]Campaign {campaign_id}[/bold cyan]"),
@@ -465,7 +477,7 @@ def run_campaign(
                     technique=f"technique: {technique_id}",
                 )
 
-            summary = _run_campaign(db, campaign_id, progress_callback=on_progress)
+            summary = _run_campaign(db, campaign_id, progress_callback=on_progress, concurrency=concurrency)
 
     console.print(f"[green]Campaign {campaign_id} execution completed[/green]")
     table = Table("Metric", "Value")
