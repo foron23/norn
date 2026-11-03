@@ -331,7 +331,9 @@ class ReplicaDetail:
 @dataclass(frozen=True)
 class MetricResult:
     name: str
-    value: float
+    # None means "not measurable" (e.g. a target that emits no policy events):
+    # it is never coerced to 0.0, because 0 means "it did not happen".
+    value: float | None
     pass_fail: bool
     evidence_ids: list[int] = field(default_factory=list)
     layer: str = ""
