@@ -261,7 +261,12 @@ def plan_campaign(
     table.add_row("Name", campaign_config.campaign_name)
     table.add_row("Layer", campaign_config.layer)
     table.add_row("State", CampaignState.PLANNED.value)
-    table.add_row("Model", campaign_config.model.model_name)
+    if campaign_config.target_manifest:
+        # A target campaign drives an app, not a model: say so instead of
+        # printing a provider the campaign never calls.
+        table.add_row("Target", campaign_config.target_manifest)
+    else:
+        table.add_row("Model", campaign_config.model.model_name)
     table.add_row("Scoring", campaign_config.scoring.mode.value)
     console.print(table)
     console.print(f"[dim]Use 'norn run-campaign --campaign-id {campaign_id}' to execute[/dim]")
@@ -270,6 +275,11 @@ def plan_campaign(
 # ── NOR-29: verbose live table helpers ───────────────────────────────────────
 _TRUNCATE = 140
 _HL_RE = re.compile(r"H\((\w+)=([\d.]+)\)\s+L\((\w+)=([\d.]+)\)")
+
+
+def _metric_value(value: float | None) -> str:
+    """Render a metric value; ``None`` means not measurable, not zero."""
+    return "n/d" if value is None else f"{value:.4f}"
 
 
 def _trunc(text: str, n: int = _TRUNCATE) -> str:
@@ -470,7 +480,9 @@ def run_campaign(
         mtable = Table("Layer", "Metric", "Value", "Result")
         for m in summary.metrics:
             badge = "[green]PASS[/green]" if m.pass_fail else "[red]FAIL[/red]"
-            mtable.add_row(m.layer, m.name, f"{m.value:.4f}", badge)
+            if m.value is None:
+                badge = "[yellow]n/d[/yellow]"
+            mtable.add_row(m.layer, m.name, _metric_value(m.value), badge)
         console.print(mtable)
 
     # NOR-07: estimated cost (explicit estimate disclaimer)
@@ -573,7 +585,11 @@ def assess_campaign(
     table = Table("Layer", "Metric", "Value", "Threshold", "Result")
     for r in results:
         badge = "[green]PASS[/green]" if r.pass_fail else "[red]FAIL[/red]"
-        table.add_row(r.layer, r.name, f"{r.value:.4f}", str(r.threshold), badge)
+        if r.value is None:
+            badge = "[yellow]NOT MEASURABLE[/yellow]"
+        table.add_row(r.layer, r.name, _metric_value(r.value), str(r.threshold), badge)
+        if r.value is None and r.reason:
+            console.print(f"[dim]{r.name}: {r.reason}[/dim]")
     console.print(table)
 
 
@@ -771,6 +787,79 @@ def cost_import(
 
 
 app.add_typer(cost_app, name="cost")
+
+
+# ── Target connectors (HTTP/SSE) ─────────────────────────────────────────────
+
+target_app = typer.Typer(help="Target connectors over HTTP/SSE (norn/targets)")
+
+
+@target_app.command("check")
+def target_check(
+    manifest_path: Annotated[
+        str, typer.Option("--manifest", "-m", help="Path to the target manifest YAML")
+    ],
+):
+    """Validate a target: capabilities, preflight (oracle not blind) and smoke run."""
+    from norn.targets.client import TargetError, chat
+    from norn.targets.manifest import load_manifest
+    from norn.targets.preflight import preflight
+
+    manifest = load_manifest(manifest_path)
+
+    console.print(f"[bold]target[/bold] {manifest.name} — {manifest.base_url}")
+    console.print(f"chat: {manifest.chat_endpoint}  deadline: {manifest.deadline_ms}ms")
+    console.print(f"capabilities: {_capabilities_text(manifest.capabilities)}")
+    for predicate in manifest.predicates:
+        console.print(
+            f"  predicate {predicate.id}: {predicate.method} {predicate.endpoint} "
+            f"[dim]{predicate.json_path}[/dim]"
+        )
+
+    try:
+        result = preflight(manifest)
+    except TargetError as exc:
+        console.print(f"[red]unreachable[/red]: {exc}")
+        raise typer.Exit(code=2) from exc
+
+    if not result.ok:
+        console.print(f"[red]preflight {result.status.upper()}[/red] — {result.detail}")
+        for evidence in (*result.negative, *result.positive):
+            console.print(f"  {evidence.predicate_id}: {evidence.state} — {evidence.detail}")
+        raise typer.Exit(code=1)
+
+    negative = ", ".join(f"{e.predicate_id}={e.state}" for e in result.negative)
+    positive = ", ".join(f"{e.predicate_id}={e.state}" for e in result.positive)
+    console.print(f"[green]preflight OK[/green] (before: {negative} / after: {positive})")
+
+    try:
+        record = chat(manifest, "Availability check: how are you?")
+    except TargetError as exc:
+        console.print(f"[red]smoke run failed[/red]: {exc}")
+        raise typer.Exit(code=1) from exc
+
+    console.print(
+        f"smoke run: finished={record.finished} tools={len(record.tool_calls)} "
+        f"retrieval={len(record.retrieval)} tokens={record.tokens_in}/{record.tokens_out} "
+        f"latency={record.latency_ms}ms unknown_events={len(record.unknown_events)}"
+    )
+    if record.violations:
+        for violation in record.violations:
+            console.print(f"  [yellow]contract[/yellow]: {violation}")
+    if not record.finished:
+        raise typer.Exit(code=1)
+
+
+def _capabilities_text(capabilities: frozenset[str]) -> str:
+    """List capabilities in the contract's fixed order (stable output)."""
+    from norn.targets.manifest import CANONICAL_CAPABILITIES
+
+    ordered = [c for c in CANONICAL_CAPABILITIES if c in capabilities]
+    extra = sorted(capabilities - set(CANONICAL_CAPABILITIES))
+    return ", ".join([*ordered, *extra]) or "(none)"
+
+
+app.add_typer(target_app, name="target")
 
 
 # ── Taxonomy ─────────────────────────────────────────────────────────────────
