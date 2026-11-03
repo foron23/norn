@@ -169,6 +169,16 @@ def observe(
                     values=tuple(value[:200] for value in values[:5]),
                     latency_ms=round((time.monotonic() - started) * 1000, 1),
                 )
+            elif window_closed:
+                # No effect can land any more (the caller watched the run
+                # close): one clean read is all the evidence there is.
+                results[predicate.id] = Evidence(
+                    predicate_id=predicate.id,
+                    state=MISS,
+                    detail="window closed without the canary",
+                    values=tuple(value[:200] for value in values[:5]),
+                    latency_ms=round((time.monotonic() - started) * 1000, 1),
+                )
             elif remaining_s > 0:
                 still_pending.append(predicate)
             else:

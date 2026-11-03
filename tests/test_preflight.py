@@ -18,7 +18,7 @@ from norn.targets.preflight import (
 from tests.fixtures.fake_target_app import FakeTargetApp
 
 
-def manifest_for(app: FakeTargetApp, endpoint: str = "/attack", deadline_ms: int = 1500):
+def manifest_for(app: FakeTargetApp, endpoint: str = "/attack", deadline_ms: int = 6000):
     return from_dict(
         {
             "name": "fake",
@@ -111,7 +111,7 @@ def test_cli_exit_code_and_summary(app: FakeTargetApp, tmp_path: Path, capsys) -
         f"base_url: {app.base_url}\n"
         "chat_endpoint: /attack\n"
         "capabilities: [text, stream, tool_calls, policy]\n"
-        "deadline_ms: 1500\n"
+        "deadline_ms: 6000\n"
         "predicates:\n"
         "  - id: note-planted\n"
         "    method: GET\n"

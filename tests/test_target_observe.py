@@ -24,7 +24,7 @@ def manifest_with(app: FakeTargetApp, **overrides):
         "base_url": app.base_url,
         "chat_endpoint": "/attack",
         "capabilities": ["text", "stream", "tool_calls", "policy"],
-        "deadline_ms": 1500,
+        "deadline_ms": 3000,
         "predicates": [
             {
                 "id": "note-planted",

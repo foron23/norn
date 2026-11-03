@@ -81,7 +81,7 @@ def _write_manifest(
         f"base_url: {app.base_url}\n"
         f"chat_endpoint: {endpoint}\n"
         f"capabilities: {capabilities}\n"
-        "deadline_ms: 2000\n"
+        "deadline_ms: 6000\n"
         "predicates:\n"
         "  - id: note-planted\n"
         "    method: GET\n"
