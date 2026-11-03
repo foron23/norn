@@ -148,6 +148,7 @@ class FakeTargetApp:
         self._store_lock = threading.Lock()
         self._notes: list[str] = []
         self._outbox: list[str] = []
+        self._uploads: list[dict[str, Any]] = []
         self._httpd: _FakeTargetHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -210,6 +211,22 @@ class FakeTargetApp:
             for i, text in enumerate(messages, 1)
         ]
 
+    def record_upload(self, filename: str, content: str) -> dict[str, Any]:
+        """Store one planted document and return its identifiers.
+
+        This is the double's planting door: content arriving from outside lands
+        in the app's corpus, exactly like the real app's ``POST /api/uploads``.
+        """
+        with self._store_lock:
+            self._uploads.append({"filename": filename, "content": content})
+            upload_id = len(self._uploads)
+        return {"upload_id": upload_id, "document_id": upload_id}
+
+    def uploads(self) -> list[dict[str, Any]]:
+        """Snapshot of everything planted through the door."""
+        with self._store_lock:
+            return [dict(item) for item in self._uploads]
+
     # -- request handling (called from the handler thread) -------------
     def chat_events(
         self, path: str, message: str, session_id: str
@@ -259,6 +276,15 @@ class _FakeTargetHandler(BaseHTTPRequestHandler):
             self._send_not_found()
 
     def do_POST(self) -> None:
+        if self.path == "/api/uploads":
+            payload = self._read_json_body()
+            filename = payload.get("filename")
+            content = payload.get("content")
+            if not isinstance(filename, str) or not isinstance(content, str):
+                self._send_json(422, {"error": "filename and content are required"})
+                return
+            self._send_json(201, self.app.record_upload(filename, content))
+            return
         if self.path not in ("/attack", "/benign", "/truncated"):
             self._send_not_found()
             return
@@ -271,8 +297,8 @@ class _FakeTargetHandler(BaseHTTPRequestHandler):
         self._send_sse(events)
 
     # -- helpers -------------------------------------------------------
-    def _read_chat_body(self) -> tuple[str, str]:
-        """Parse the JSON chat body, tolerating missing fields."""
+    def _read_json_body(self) -> dict[str, Any]:
+        """Parse the request body as a JSON object, tolerating anything else."""
         raw = b""
         length = self.headers.get("Content-Length")
         if length:
@@ -284,8 +310,11 @@ class _FakeTargetHandler(BaseHTTPRequestHandler):
             payload = json.loads(raw.decode("utf-8") or "{}")
         except (UnicodeDecodeError, json.JSONDecodeError):
             payload = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _read_chat_body(self) -> tuple[str, str]:
+        """Parse the JSON chat body, tolerating missing fields."""
+        payload = self._read_json_body()
         message = payload.get("message")
         session_id = payload.get("session_id")
         # The Authorization header is deliberately read-and-ignored: the

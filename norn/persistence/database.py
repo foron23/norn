@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -278,6 +279,35 @@ class CampaignRepository(BaseRepository):
         )
         self.conn.commit()
         return cur.lastrowid
+
+    def insert_target_evidence(self, replica_id: int, predicate_id: str, state: str,
+                               detail: str = "", values: Sequence[str] | None = None,
+                               latency_ms: float | None = None) -> int:
+        """Persist one evidence read from the target's own endpoints.
+
+        ``state`` is ``hit`` / ``miss`` / ``inconclusive``. An inconclusive read
+        is stored as such: it is never rewritten as a miss, so nothing downstream
+        can turn "could not look" into "resisted".
+        """
+        payload = json.dumps(list(values or []), ensure_ascii=False)
+        cur = self.conn.execute(
+            "INSERT INTO target_evidence "
+            "(replica_id, predicate_id, state, detail, values_json, latency_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (replica_id, predicate_id, state, detail, payload, latency_ms),
+        )
+        self.conn.commit()
+        return cur.lastrowid
+
+    def get_target_evidence(self, campaign_id: int) -> list[dict[str, Any]]:
+        """All evidence rows of a campaign, ordered by replica."""
+        rows = self.conn.execute(
+            "SELECT te.* FROM target_evidence te "
+            "JOIN run_replica rr ON rr.id = te.replica_id "
+            "WHERE rr.campaign_id = ? ORDER BY te.replica_id, te.id",
+            (campaign_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_replicas(self, campaign_id: int, arm: str | None = None,
                      temperature: float | None = None) -> list[dict[str, Any]]:
@@ -605,4 +635,7 @@ class CampaignDataCollector:
             "risks": self.kill_chain_repo.get_risks(campaign_id),
             "tool_calls": self.campaign_repo.get_tool_calls(campaign_id),
             "retrieval_events": self.campaign_repo.get_retrieval_events(campaign_id),
+            # Target connector: what the app's own endpoints said about each
+            # replica. Empty for model campaigns, so the key is always present.
+            "target_evidence": self.campaign_repo.get_target_evidence(campaign_id),
         }

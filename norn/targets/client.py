@@ -23,6 +23,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
+from norn.targets.binding import Plant, plant_request
 from norn.targets.manifest import CANONICAL_EVENTS, TargetManifest
 from norn.targets.sse import iter_events
 
@@ -339,6 +340,43 @@ class TargetClient:
     def chat(self, message: str, session_id: str | None = None, **kwargs: Any) -> RunRecord:
         """Drive one app run for ``message``."""
         return chat(self.manifest, message, session_id, **kwargs)
+
+    def plant(self, plant: Plant, *, canary: str, payload: str) -> dict[str, Any]:
+        """Post one planting door, with its templates rendered at call time.
+
+        A door that answers non-2xx raises :class:`TargetError`: the case could
+        not be mounted, and a case that never got its material must not be
+        scored as if the app had resisted.
+        """
+        if not isinstance(plant, Plant):
+            raise TypeError("plant must be a binding.Plant")
+        method, endpoint, headers, body = plant_request(
+            plant, canary=canary, payload=payload
+        )
+        request_headers = _headers(self.manifest, "application/json")
+        request_headers.update(headers)
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        if data is not None:
+            request_headers.setdefault("Content-Type", "application/json")
+        request = urllib.request.Request(
+            _url(self.manifest.base_url, endpoint),
+            data=data,
+            headers=request_headers,
+            method=method,
+        )
+        timeout_s = self.manifest.deadline_ms / 1000
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_s) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as exc:
+            raise TargetError(f"door {plant.door_id} answered {exc.code}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            raise TargetError(f"door {plant.door_id} failed: {exc}") from exc
+        try:
+            parsed = json.loads(raw or "{}")
+        except ValueError:
+            return {"raw": raw[:200]}
+        return parsed if isinstance(parsed, dict) else {"raw": raw[:200]}
 
     @property
     def capabilities(self) -> frozenset[str]:

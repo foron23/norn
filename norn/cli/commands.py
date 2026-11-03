@@ -269,6 +269,12 @@ def plan_campaign(
         table.add_row("Model", campaign_config.model.model_name)
     table.add_row("Scoring", campaign_config.scoring.mode.value)
     console.print(table)
+    # A case dropped for a missing door or role is a fact about the plan, not a
+    # result: say it out loud so nobody reads a short plan as a strong app.
+    for note in campaign_config.plan_notes:
+        console.print(
+            f"[yellow]Skipped[/yellow] {note.get('case')}: {note.get('reason')}"
+        )
     console.print(f"[dim]Use 'norn run-campaign --campaign-id {campaign_id}' to execute[/dim]")
 
 
