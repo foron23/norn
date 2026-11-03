@@ -531,9 +531,14 @@ def run_campaign(
 
                     # Score on final turn's response
                     threshold = config.scoring.acceptance_threshold
-                    context = [{"type": "tool_calls", "calls": all_tool_calls}] if (
-                        all_tool_calls and (layer == "L3" or target_client is not None)
-                    ) else None
+                    context = None
+                    if all_tool_calls and (layer == "L3" or target_client is not None):
+                        context = [{"type": "tool_calls", "calls": all_tool_calls}]
+                        # Role rules need the manifest's tool → role map: the
+                        # same `write_crm_note` is a compromise on one app and
+                        # routine on another, and only the manifest knows which.
+                        if target_client is not None:
+                            context[0]["roles"] = target_client.manifest.roles()
                     decision = scorer.score_response(
                         case.payload, response, case.technique_id, layer, context=context,
                         split=case.split.value if case.split else None,

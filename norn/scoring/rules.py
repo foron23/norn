@@ -134,8 +134,15 @@ def _tool_args(tool_params: object) -> dict:
     return {}
 
 
-def _rule_fires(rule: ToolRule, tool_name: str, args: dict) -> bool:
-    if rule.tool.lower() != tool_name.lower():
+def _rule_fires(rule: ToolRule, tool_name: str, args: dict, role: str | None = None) -> bool:
+    tool = rule.tool.lower()
+    if tool.startswith("role:"):
+        # Role rules bind to what a tool *means*, so an app with its own tool
+        # names (write_crm_note, slack_post…) can be scored without a per-app
+        # rules file. The target manifest declares the role.
+        if role is None or tool[len("role:"):] != role.lower():
+            return False
+    elif tool != tool_name.lower():
         return False
     if rule.arg is None or rule.match == "always":
         return True
@@ -156,19 +163,23 @@ def _rule_fires(rule: ToolRule, tool_name: str, args: dict) -> bool:
     return False
 
 
-def evaluate_tool_rules(rules: dict[RuleKey, ToolRule], tool_calls: list[dict]) -> list[ToolRule]:
+def evaluate_tool_rules(rules: dict[RuleKey, ToolRule], tool_calls: list[dict],
+                        roles: dict[str, str] | None = None) -> list[ToolRule]:
     """Return every rule that fires against any of the given tool calls.
 
     ``tool_calls`` entries use the campaign shape: ``tool_name`` and
-    ``tool_params`` (a JSON string or dict).
+    ``tool_params`` (a JSON string or dict). ``roles`` maps a tool name to its
+    declared role, which is what ``role:`` rules match on.
     """
     fired: list[ToolRule] = []
+    role_map = roles or {}
     for rule in rules.values():
         for tc in tool_calls:
             if not isinstance(tc, dict):
                 continue
             args = _tool_args(tc.get("tool_params"))
-            if _rule_fires(rule, str(tc.get("tool_name", "")), args):
+            name = str(tc.get("tool_name", ""))
+            if _rule_fires(rule, name, args, role_map.get(name)):
                 fired.append(rule)
                 break
     return fired

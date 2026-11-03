@@ -322,7 +322,11 @@ class HeuristicScorer:
         if layer == "L3" and context:
             for item in context:
                 if isinstance(item, dict) and item.get("type") == "tool_calls":
-                    fired = evaluate_tool_rules(self.tool_rules, list(item.get("calls", [])))
+                    fired = evaluate_tool_rules(
+                        self.tool_rules,
+                        list(item.get("calls", [])),
+                        roles=item.get("roles") or None,
+                    )
                     if fired:
                         return ScoringDecision(
                             score_value=max(r.score for r in fired),

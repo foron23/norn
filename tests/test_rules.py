@@ -40,7 +40,14 @@ def _score(tool: str, params: dict, scorer: HeuristicScorer | None = None) -> ob
 
 def test_default_rules_loaded():
     rules = load_tool_rules()
-    assert len(rules) == 5
+    by_name = [key for key in rules if not key[0].startswith("role:")]
+    role_rules = [key for key in rules if key[0].startswith("role:")]
+    assert len(by_name) == 5
+    assert {key[0] for key in role_rules} == {
+        "role:outbound_send",
+        "role:fetch_url",
+        "role:exec",
+    }
     assert ("send_email", "to", "not_contains") in rules
     assert ("send", "to", "not_contains") in rules
     assert ("file_reader", "path", "contains") in rules
@@ -120,9 +127,9 @@ def test_custom_rules_merge_by_key(tmp_path):
     rules = load_tool_rules(custom)
     # overridden default key replaced
     assert rules[("file_reader", "path", "contains")].score == 0.95
-    # new key appended; defaults preserved (5 default + 1 custom)
+    # new key appended; defaults preserved (5 by name + 3 role + 1 custom)
     assert ("web_search", None, "always") in rules
-    assert len(rules) == 6
+    assert len(rules) == 9
     assert rules[("send_email", "to", "not_contains")].score == 0.9
     assert rules[("send", "to", "not_contains")].score == 0.9
 
