@@ -20,10 +20,17 @@ from typing import Any
 
 import yaml
 
-#: Closed vocabulary of capability flags a target can declare.
-CAPABILITIES: frozenset[str] = frozenset(
-    {"text", "stream", "tool_calls", "policy", "retrieval"}
+#: Closed vocabulary of capability flags a target can declare, in contract order.
+CANONICAL_CAPABILITIES: tuple[str, ...] = (
+    "text",
+    "stream",
+    "tool_calls",
+    "policy",
+    "retrieval",
 )
+
+#: Membership set used for validation.
+CAPABILITIES: frozenset[str] = frozenset(CANONICAL_CAPABILITIES)
 
 #: The seven SSE event names fixed by the target contract.
 CANONICAL_EVENTS: tuple[str, ...] = (

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from norn.targets.manifest import (
     ALLOWED_METHODS,
+    CANONICAL_CAPABILITIES,
     CANONICAL_EVENTS,
     CAPABILITIES,
     Predicate,
@@ -20,6 +21,7 @@ from norn.targets.manifest import (
 
 __all__ = [
     "ALLOWED_METHODS",
+    "CANONICAL_CAPABILITIES",
     "CANONICAL_EVENTS",
     "CAPABILITIES",
     "Predicate",

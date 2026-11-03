@@ -165,6 +165,12 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
     round-trip (a full ``model_dump_json`` would otherwise mark defaulted
     ``mode``/``vote_strategy`` as explicit and defeat D1/D2).
     """
+    if config.target_manifest:
+        # Fail fast: a manifest that does not load cannot be measured.
+        from norn.targets.manifest import load_manifest
+
+        load_manifest(config.target_manifest)
+
     scoring = config.scoring
     scoring.verifiers = scoring.effective_verifiers()
     scoring.vote_strategy = scoring.effective_vote_strategy()
@@ -365,19 +371,23 @@ def run_campaign(
     test_cases = repo.get_test_cases(campaign_id)
 
     provider_name = base_model_config.provider  # defaults to "ollama"
-    client = build_provider(provider_name)
+    # Target connector: the campaign measures a real app over HTTP/SSE, so
+    # there is no model provider to build.
+    target_client = _build_target_client(config)
+    client = None if target_client is not None else build_provider(provider_name)
     console = Console()
 
     # NOR-01: L3 campaigns with tools configured run the real agent loop.
     # Without tools (or for L1/L2) the legacy simple loop is used unchanged.
-    use_agent_loop = layer == "L3" and bool(config.tools)
+    # A target app brings its own tools, so it always runs one driver call.
+    use_agent_loop = layer == "L3" and bool(config.tools) and target_client is None
     executor = None
     if use_agent_loop:
         # NOR-13: declarative tools_file (add-only) extends the lab defaults.
         executor = ToolExecutor(config.tools, tools_file=config.tools_file)
 
     # Pre-flight: warn if model is not known to Ollama (Ollama-only check)
-    if provider_name == "ollama":
+    if provider_name == "ollama" and target_client is None:
         _validate_ollama_connection(base_model_config)
 
     # NOR-08: arms — each arm runs the full battery with its own replicas.
@@ -436,7 +446,11 @@ def run_campaign(
                 )
 
                 try:
-                    if use_agent_loop:
+                    if target_client is not None:
+                        response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_target_replica(
+                            target_client, repo, replica_id, case,
+                        )
+                    elif use_agent_loop:
                         response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_agent_replica(
                             client, repo, replica_id, case, model_config, config, executor,
                         )
@@ -448,7 +462,7 @@ def run_campaign(
                     # Score on final turn's response
                     threshold = config.scoring.acceptance_threshold
                     context = [{"type": "tool_calls", "calls": all_tool_calls}] if (
-                        all_tool_calls and layer == "L3"
+                        all_tool_calls and (layer == "L3" or target_client is not None)
                     ) else None
                     decision = scorer.score_response(
                         case.payload, response, case.technique_id, layer, context=context,
@@ -680,6 +694,73 @@ def _run_simple_replica(
             )
 
     return response, tokens_in, tokens_out, latency_ms, all_tool_calls
+
+
+def _build_target_client(config: CampaignConfig):
+    """Return a :class:`TargetClient` when the config names a manifest."""
+    if not config.target_manifest:
+        return None
+    from norn.targets.client import TargetClient
+    from norn.targets.manifest import load_manifest
+
+    return TargetClient(load_manifest(config.target_manifest))
+
+
+def _run_target_replica(
+    client,
+    repo: CampaignRepository,
+    replica_id: int,
+    case: CaseDescriptor,
+) -> tuple[str, int, int, float, list[dict]]:
+    """Drive one app run over HTTP/SSE and persist what the stream reported.
+
+    One replica is exactly one ``POST`` to the target's chat endpoint: the app
+    keeps its own conversation state, so re-sending the payload per turn would
+    measure something else entirely.
+
+    A run whose stream never closed is raised as ``TimeoutError`` (the caller
+    already marks such replicas ``failed``): a truncated run is not resistance,
+    so it must never be scored as a blocked answer.
+    """
+    record = client.chat(case.payload)
+
+    if not record.finished:
+        problems = ", ".join(record.violations) or "no run.finished"
+        raise TimeoutError(
+            f"target run did not finish within {client.manifest.deadline_ms}ms "
+            f"({problems})"
+        )
+
+    repo.insert_turn_event(
+        replica_id, 0, case.payload, record.text or "(no response)",
+        tokens_in=record.tokens_in,
+        tokens_out=record.tokens_out,
+        latency_ms=record.latency_ms,
+    )
+
+    tool_calls: list[dict] = []
+    for call in record.tool_calls:
+        entry = call.as_provider_dict()
+        repo.insert_tool_call(
+            replica_id=replica_id,
+            tool_name=entry["tool_name"],
+            tool_params=entry["tool_params"],
+            tool_result=entry["tool_result"],
+            is_authorized=bool(entry["is_authorized"]),
+            turn=entry["turn"],
+        )
+        tool_calls.append(entry)
+
+    if record.retrieval and case.layer == "L2":
+        chunks = list(record.retrieval[-1].get("chunks") or [])
+        repo.insert_retrieval_event(
+            replica_id,
+            False,
+            len(chunks),
+            chunks,
+        )
+
+    return record.text, record.tokens_in, record.tokens_out, record.latency_ms, tool_calls
 
 
 def _run_agent_replica(

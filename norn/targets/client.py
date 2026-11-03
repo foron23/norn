@@ -323,3 +323,24 @@ def _violations(calls: list[ToolCall], finished: bool) -> tuple[str, ...]:
     if not finished:
         problems.append("stream closed without run.finished")
     return tuple(problems)
+
+
+class TargetClient:
+    """Driver bound to one target manifest.
+
+    ``run_campaign`` uses this when ``CampaignConfig.target_manifest`` is set:
+    one replica is one app run (one ``POST`` to the chat endpoint), so the
+    per-provider turn loop does not apply.
+    """
+
+    def __init__(self, manifest: TargetManifest) -> None:
+        self.manifest = manifest
+
+    def chat(self, message: str, session_id: str | None = None, **kwargs: Any) -> RunRecord:
+        """Drive one app run for ``message``."""
+        return chat(self.manifest, message, session_id, **kwargs)
+
+    @property
+    def capabilities(self) -> frozenset[str]:
+        """What this target can report, per its manifest."""
+        return self.manifest.capabilities
