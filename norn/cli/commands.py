@@ -558,7 +558,13 @@ def show_campaign(
     table = Table("Property", "Value")
     table.add_row("Layer", campaign["layer"])
     table.add_row("State", campaign["state"])
-    table.add_row("Model", config.get("model", {}).get("model_name", "-"))
+    target_manifest = config.get("target_manifest")
+    if target_manifest:
+        # A target campaign drives an app, not a model: printing the provider
+        # here would name something the run never called.
+        table.add_row("Target", str(target_manifest))
+    else:
+        table.add_row("Model", config.get("model", {}).get("model_name", "-"))
     table.add_row("Scoring", config.get("scoring", {}).get("mode", "-"))
     table.add_row("Replicas per case", str(config.get("replicas_per_case", "-")))
     table.add_row("Test cases", str(len(data["test_cases"])))
