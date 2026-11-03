@@ -32,6 +32,22 @@ CANONICAL_CAPABILITIES: tuple[str, ...] = (
 #: Membership set used for validation.
 CAPABILITIES: frozenset[str] = frozenset(CANONICAL_CAPABILITIES)
 
+#: Closed vocabulary of tool roles. A role is what a tool *means* to an
+#: experiment (send data out, write a record, read everything, fetch a URL,
+#: execute), independent of the app's own naming. Scoring rules and corpus
+#: bindings key on the role, never on the literal tool name.
+CANONICAL_ROLES: tuple[str, ...] = (
+    "outbound_send",
+    "record_write",
+    "read_all",
+    "fetch_url",
+    "exec",
+)
+
+#: Membership set used for validation.
+ROLES: frozenset[str] = frozenset(CANONICAL_ROLES)
+
+
 #: The seven SSE event names fixed by the target contract.
 CANONICAL_EVENTS: tuple[str, ...] = (
     "run.started",
@@ -56,8 +72,18 @@ _MANIFEST_FIELDS = frozenset(
         "token_env",
         "deadline_ms",
         "event_map",
+        "tools",
+        "doors",
     }
 )
+
+_TOOL_FIELDS = frozenset({"role", "args"})
+
+_DOOR_FIELDS = frozenset({"id", "method", "endpoint", "headers", "body"})
+
+#: Verbs a planting door may use.
+DOOR_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH"})
+
 
 _PREDICATE_FIELDS = frozenset({"id", "method", "endpoint", "json_path", "contains"})
 
@@ -119,6 +145,61 @@ class Predicate:
 
 
 @dataclass(frozen=True)
+class ToolSpec:
+    """What one of the app's tools means to the experiment.
+
+    ``role`` comes from :data:`ROLES`; ``args`` is the tool's argument list as
+    the app declares it, used by the corpus binder to name the right slot.
+    """
+
+    role: str
+    args: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        role = _require_text(self.role, "tool role")
+        if role not in ROLES:
+            raise ValueError(
+                f"unknown tool role: {role!r} (expected one of {', '.join(CANONICAL_ROLES)})"
+            )
+        object.__setattr__(self, "role", role)
+        args = tuple(self.args)
+        for arg in args:
+            _require_text(arg, f"tool arg of role {role!r}")
+        object.__setattr__(self, "args", args)
+
+
+@dataclass(frozen=True)
+class Door:
+    """A planting door: the app's own intake for outside content.
+
+    Doors are how an indirect case gets material to work with (an uploaded
+    document, an inbound email). ``body`` and ``headers`` may carry templates
+    resolved at plant time: ``{{payload}}`` is the case content, ``{{canary}}``
+    the replica's marker, ``{{env:VAR}}`` a secret that is read at run time and
+    never persisted in the plan.
+    """
+
+    id: str
+    method: str
+    endpoint: str
+    headers: dict[str, str] = field(default_factory=dict)
+    body: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "id", _require_text(self.id, "door id"))
+        object.__setattr__(self, "endpoint", _require_text(self.endpoint, "door endpoint"))
+        method = _require_text(self.method, "door method").upper()
+        if method not in DOOR_METHODS:
+            raise ValueError(
+                f"door method must be one of {', '.join(sorted(DOOR_METHODS))}, got {method!r}"
+            )
+        object.__setattr__(self, "method", method)
+        headers = {str(k): str(v) for k, v in dict(self.headers).items()}
+        object.__setattr__(self, "headers", headers)
+        object.__setattr__(self, "body", dict(self.body))
+
+
+@dataclass(frozen=True)
 class TargetManifest:
     """Validated description of one HTTP/SSE target application."""
 
@@ -130,6 +211,8 @@ class TargetManifest:
     token_env: str = "NORN_TARGET_TOKEN"
     deadline_ms: int = 8000
     event_map: dict[str, str] = field(default_factory=dict)
+    tools: dict[str, ToolSpec] = field(default_factory=dict)
+    doors: dict[str, Door] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _require_text(self.name, "name"))
@@ -179,6 +262,40 @@ class TargetManifest:
             )
         object.__setattr__(self, "event_map", event_map)
 
+        tools = dict(self.tools)
+        for name, spec in tools.items():
+            _require_text(name, "tool name")
+            if not isinstance(spec, ToolSpec):
+                raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+                    f"tool {name!r} must be a ToolSpec"
+                )
+        object.__setattr__(self, "tools", tools)
+
+        doors: dict[str, Door] = {}
+        for key, door in dict(self.doors).items():
+            if not isinstance(door, Door):
+                raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+                    f"door {key!r} must be a Door"
+                )
+            if door.id in doors:
+                raise ValueError(f"duplicate door id: {door.id!r}")
+            doors[door.id] = door
+        object.__setattr__(self, "doors", doors)
+
+    def role_of(self, tool_name: str) -> str | None:
+        """Return the declared role of ``tool_name``, if the manifest knows it."""
+        spec = self.tools.get(tool_name)
+        return spec.role if spec is not None else None
+
+    def door(self, door_id: str) -> Door | None:
+        """Return the door named ``door_id``, if declared."""
+        return self.doors.get(door_id)
+
+    def roles(self) -> dict[str, str]:
+        """Map tool name → role for the whole declared surface."""
+        return {name: spec.role for name, spec in self.tools.items()}
+
+
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> TargetManifest:
         """Build a validated manifest from an already-parsed mapping."""
@@ -219,6 +336,72 @@ def _predicates_from_list(raw: Any) -> tuple[Predicate, ...]:
     return tuple(_predicate_from_dict(item, index) for index, item in enumerate(raw))
 
 
+def _tools_from_mapping(raw: Any) -> dict[str, ToolSpec]:
+    """Validate the ``tools`` mapping (absent or null means none)."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+            "tools must be a mapping of tool name → {role, args}"
+        )
+    tools: dict[str, ToolSpec] = {}
+    for name, spec in raw.items():
+        if not isinstance(spec, Mapping):
+            raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+                f"tool {name!r} must be a mapping"
+            )
+        unknown = set(spec) - _TOOL_FIELDS
+        if unknown:
+            raise ValueError(f"unknown field in tool {name!r}: {_first_unknown(unknown)}")
+        args = spec.get("args") or ()
+        if isinstance(args, (str, bytes)) or not isinstance(args, (list, tuple)):
+            raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+                f"args of tool {name!r} must be a list"
+            )
+        tools[str(name)] = ToolSpec(role=_require_field(spec, "role"), args=tuple(args))
+    return tools
+
+
+def _doors_from_list(raw: Any) -> dict[str, Door]:
+    """Validate the ``doors`` list (absent or null means none)."""
+    if raw is None:
+        return {}
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, (list, tuple)):
+        raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+            "doors must be a list of mappings"
+        )
+    doors: dict[str, Door] = {}
+    for index, item in enumerate(raw):
+        if not isinstance(item, Mapping):
+            raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+                f"door #{index} must be a mapping"
+            )
+        unknown = set(item) - _DOOR_FIELDS
+        if unknown:
+            raise ValueError(f"unknown door field: {_first_unknown(unknown)}")
+        headers = item.get("headers") or {}
+        body = item.get("body") or {}
+        if not isinstance(headers, Mapping):
+            raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+                f"door #{index} headers must be a mapping"
+            )
+        if not isinstance(body, Mapping):
+            raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+                f"door #{index} body must be a mapping"
+            )
+        door = Door(
+            id=_require_field(item, "id"),
+            method=_require_field(item, "method"),
+            endpoint=_require_field(item, "endpoint"),
+            headers=dict(headers),
+            body=dict(body),
+        )
+        if door.id in doors:
+            raise ValueError(f"duplicate door id: {door.id!r}")
+        doors[door.id] = door
+    return doors
+
+
 def from_dict(data: Mapping[str, Any]) -> TargetManifest:
     """Build a validated :class:`TargetManifest` from a raw mapping."""
     if not isinstance(data, Mapping):
@@ -256,6 +439,8 @@ def from_dict(data: Mapping[str, Any]) -> TargetManifest:
         token_env=data.get("token_env", "NORN_TARGET_TOKEN"),
         deadline_ms=data.get("deadline_ms", 8000),
         event_map=dict(raw_event_map),
+        tools=_tools_from_mapping(data.get("tools")),
+        doors=_doors_from_list(data.get("doors")),
     )
 
 

@@ -265,6 +265,10 @@ class CampaignConfig(pydantic.BaseModel):
     # NOR-31: alternative corpus root (e.g. the crossed corpus under
     # norn/corpus/l1/adversarial/v2). None keeps corpus/<layer>/.
     corpus_dir: str | None = None
+    # Target connector: what the plan could not mount. Filled by plan_campaign
+    # with {case, reason} entries (no_door / no_role / bad_slot) so a dropped
+    # case is visible instead of counting as a defence.
+    plan_notes: list[dict] = pydantic.Field(default_factory=list)
     tools: list[str] = pydantic.Field(default_factory=list)
     tools_file: str | None = None
     arms: list[ArmConfig] | None = None

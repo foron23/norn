@@ -167,24 +167,25 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
     round-trip (a full ``model_dump_json`` would otherwise mark defaulted
     ``mode``/``vote_strategy`` as explicit and defeat D1/D2).
     """
+    target_manifest = None
     if config.target_manifest:
         # Fail fast: a manifest that does not load cannot be measured.
         from norn.targets.manifest import load_manifest
 
-        load_manifest(config.target_manifest)
+        target_manifest = load_manifest(config.target_manifest)
 
     scoring = config.scoring
     scoring.verifiers = scoring.effective_verifiers()
     scoring.vote_strategy = scoring.effective_vote_strategy()
 
     repo = CampaignRepository(db)
-    campaign_id = repo.insert_campaign(config)
 
     probes = load_probes(config.layer, config.corpus_dir)
 
     cases: list[CaseDescriptor] = []
     case_counter = 0
     techniques_seen: set[str] = set()
+    plan_notes: list[dict] = []
 
     if probes:
         for probe in probes:
@@ -201,8 +202,32 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
                 )
 
                 case_counter += 1
+                case_id = f"{technique_id}_{variant.get('variant_type', 'default')}_{case_counter}"
+
+                # Bind to the target's surface, or drop the case with a reason.
+                # A case that cannot be mounted must never look like a defence.
+                plants: list[dict] = []
+                if target_manifest is not None:
+                    from norn.targets.binding import bind_case
+
+                    binding = bind_case(variant, target_manifest)
+                    if not binding.usable:
+                        case_counter -= 1
+                        plan_notes.append({"case": case_id, "reason": binding.reason})
+                        continue
+                    plants = [
+                        {
+                            "door_id": plant.door_id,
+                            "method": plant.method,
+                            "endpoint": plant.endpoint,
+                            "headers": plant.headers,
+                            "body": plant.body,
+                        }
+                        for plant in binding.plants
+                    ]
+
                 case = CaseDescriptor(
-                    case_id=f"{technique_id}_{variant.get('variant_type', 'default')}_{case_counter}",
+                    case_id=case_id,
                     technique_id=technique_id,
                     payload=content,
                     split=split,
@@ -212,6 +237,7 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
                         "variant_type": variant.get("variant_type", "default"),
                         "probe_source": probe.get("id", ""),
                         "task_id": variant.get("task_id", ""),
+                        **({"plants": plants} if plants else {}),
                         # NOR-31: the crossed corpus's analysis keys must survive
                         # the plan, so per-cell ASR/McNemar can be computed from
                         # the DB alone.
@@ -276,6 +302,11 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
     # NOR-03: optional balancing so benign cases are well represented (FRR/TDS)
     if config.benign_ratio is not None:
         cases = _balance_cases(cases, config.benign_ratio, seed=config.model.seed)
+
+    # Cases are built before the campaign row so the plan can record what it
+    # dropped: a case without a door or a role never reaches the runner.
+    config.plan_notes = plan_notes
+    campaign_id = repo.insert_campaign(config)
 
     for case in cases:
         repo.insert_test_case(campaign_id, case)
