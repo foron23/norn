@@ -396,3 +396,30 @@ def test_kccr_all_compromised():
     assert result.pass_fail is False  # 1.0 > 0.05
     assert result.layer == "L3"
     assert "3/3" in result.reason
+
+
+# ── Capability gating: "not measurable" is never 0 ───────────────────────────
+
+def test_uar_is_not_measurable_without_policy_events():
+    """A connector that cannot emit policy.decision cannot produce a UAR."""
+    from norn.metrics.l3_metrics import compute_cter, compute_uar
+
+    uar = compute_uar([{"is_authorized": 0}], frozenset({"text", "stream", "tool_calls"}))
+    assert uar.value is None
+    assert "not measurable" in uar.reason
+    assert "policy" in uar.reason
+    assert uar.pass_fail is False
+
+    cter = compute_cter([{"tool_name": "send", "replica_id": 1}], frozenset({"text"}))
+    assert cter.value is None
+    assert "tool_calls" in cter.reason
+
+
+def test_capabilities_none_keeps_legacy_behaviour():
+    """Without a capability declaration every legacy path is unchanged."""
+    from norn.metrics.l3_metrics import compute_uar
+
+    assert compute_uar([{"is_authorized": 0}]).value == 1.0
+    assert compute_uar([{"is_authorized": 0}], None).value == 1.0
+    declared = frozenset({"text", "stream", "tool_calls", "policy"})
+    assert compute_uar([{"is_authorized": 0}], declared).value == 1.0

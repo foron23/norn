@@ -1,6 +1,7 @@
 """Metrics orchestrator: auto-discovers and runs metric calculators."""
 from __future__ import annotations
 
+import json
 import math
 from collections import defaultdict
 from statistics import mean, median, stdev
@@ -111,6 +112,9 @@ class MetricsOrchestrator:
         observations = self._get_observations(campaign_id, arm=arm, temperature=temperature)
         decisions = self.scoring_repo.get_decisions(campaign_id, arm=arm, temperature=temperature)
         tool_calls = self.campaign_repo.get_tool_calls(campaign_id, arm=arm, temperature=temperature)
+        # A target connector that never emits policy events cannot produce a
+        # UAR: the gate turns that into "not measurable" (None), never 0.
+        capabilities = self._target_capabilities(campaign)
         replicas = self.campaign_repo.get_replicas(campaign_id, arm=arm, temperature=temperature)
         retrieval_events = self.campaign_repo.get_retrieval_events(campaign_id, arm=arm, temperature=temperature)
 
@@ -184,6 +188,8 @@ class MetricsOrchestrator:
 
             if arm is None and temperature is None:
                 for r in results:
+                    if r.value is None:
+                        continue  # not measurable: never persist a fake 0
                     metric_id = METRIC_NAME_TO_ID.get(r.name, f"{layer}_ME_01")
                     self.metrics_repo.insert_observation(
                         campaign_id, metric_id, None, r.value,
@@ -213,6 +219,8 @@ class MetricsOrchestrator:
 
             if arm is None and temperature is None:
                 for r in results:
+                    if r.value is None:
+                        continue  # not measurable: never persist a fake 0
                     metric_id = METRIC_NAME_TO_ID.get(r.name, f"{layer}_ME_01")
                     self.metrics_repo.insert_observation(
                         campaign_id, metric_id, None, r.value,
@@ -222,10 +230,10 @@ class MetricsOrchestrator:
         # ── L3 metrics ──
         if layer == "L3":
             from norn.metrics.l3_metrics import compute_cter, compute_kccr, compute_uar
-            uar = compute_uar(tool_calls)
+            uar = compute_uar(tool_calls, capabilities)
             results.append(uar)
 
-            cter = compute_cter(tool_calls)
+            cter = compute_cter(tool_calls, capabilities)
             results.append(cter)
 
             kccr = compute_kccr(decisions)
@@ -233,6 +241,8 @@ class MetricsOrchestrator:
 
             if arm is None and temperature is None:
                 for r in results:
+                    if r.value is None:
+                        continue  # not measurable: never persist a fake 0
                     metric_id = METRIC_NAME_TO_ID.get(r.name, f"{layer}_ME_01")
                     self.metrics_repo.insert_observation(
                         campaign_id, metric_id, None, r.value,
@@ -254,6 +264,8 @@ class MetricsOrchestrator:
                     cter_by_replica[rid].add(tc.get("tool_name", ""))
 
             for r in results:
+                if r.value is None:
+                    continue
                 if r.name == "UAR":
                     vals = [sum(v) / len(v) for v in uar_by_replica.values()] if uar_by_replica else [r.value]
                 elif r.name == "CTER":
@@ -263,6 +275,8 @@ class MetricsOrchestrator:
                 self._store_aggregate(campaign_id, r, vals, scope_type=scope_type)
         else:
             for r in results:
+                if r.value is None:
+                    continue
                 if r.name in {"PSR@5", "TDS"}:
                     vals = [r.value]
                 else:
@@ -274,6 +288,28 @@ class MetricsOrchestrator:
             self._compute_kill_chains(campaign_id, decisions, replicas)
 
         return results
+
+    def _target_capabilities(self, campaign: dict) -> frozenset[str] | None:
+        """Capabilities declared by the campaign's target manifest, if any.
+
+        ``None`` (no target connector) disables capability gating, so every
+        legacy provider campaign keeps its exact previous behaviour. A manifest
+        that moved or broke degrades to ``{text}`` — the safe direction, since
+        policy-based metrics then read "not measurable" instead of 0.
+        """
+        try:
+            config = json.loads(campaign.get("config_json") or "{}")
+        except ValueError:
+            return None
+        path = config.get("target_manifest")
+        if not path:
+            return None
+        from norn.targets.manifest import load_manifest
+
+        try:
+            return load_manifest(path).capabilities
+        except (OSError, ValueError):
+            return frozenset({"text"})
 
     def _store_aggregate(
         self, campaign_id: int, result: MetricResult, per_replica_values: list[float],

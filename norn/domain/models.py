@@ -278,6 +278,11 @@ class CampaignConfig(pydantic.BaseModel):
     # reported per temperature (scope temp:<v>). run_replica.temperature
     # already exists (NOR-08) — no schema change.
     temperature_sweep: list[float] | None = None
+    # Target connector: path to a target manifest YAML. When set, the campaign
+    # drives a real app over HTTP/SSE (norn/targets/) instead of a model
+    # provider, and its declared capabilities decide which metrics are
+    # measurable at all.
+    target_manifest: str | None = None
     export: ExportConfig = pydantic.Field(default_factory=ExportConfig)
 
     @pydantic.field_validator("benign_ratio")
@@ -331,7 +336,9 @@ class ReplicaDetail:
 @dataclass(frozen=True)
 class MetricResult:
     name: str
-    value: float
+    # None means "not measurable" (e.g. a target that emits no policy events):
+    # it is never coerced to 0.0, because 0 means "it did not happen".
+    value: float | None
     pass_fail: bool
     evidence_ids: list[int] = field(default_factory=list)
     layer: str = ""
