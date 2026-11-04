@@ -244,6 +244,12 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
                         "variant_type": variant.get("variant_type", "default"),
                         "probe_source": probe.get("id", ""),
                         "task_id": variant.get("task_id", ""),
+                        # The operator's turn is not the poison. When the corpus
+                        # declares one, the replica chats that text while the
+                        # payload only travels through the door.
+                        **({"user_turn": variant["user_turn"]} if variant.get("user_turn") else {}),
+                        **({"probes_rule": variant["probes_rule"]} if variant.get("probes_rule") else {}),
+                        **({"evasion": variant["evasion"]} if variant.get("evasion") else {}),
                         **({"plants": plants} if plants else {}),
                         # NOR-31: the crossed corpus's analysis keys must survive
                         # the plan, so per-cell ASR/McNemar can be computed from
@@ -882,6 +888,10 @@ def _run_target_replica(
     # its notes between runs, and a repeated canary would read as this run's hit.
     canary = make_canary(canary_salt, case.case_id, replica_id)
     payload = render(case.payload, canary=canary, payload=case.payload)
+    # The operator asked something innocent; the poison only rides the door.
+    # Without a declared turn, the payload is both (the old behaviour).
+    operator_turn = case.metadata.get("user_turn")
+    message = render(operator_turn, canary=canary, payload=payload) if operator_turn else payload
 
     # Materials first: a case that never got planted is not a measurement.
     for raw in case.metadata.get("plants") or ():
@@ -897,7 +907,7 @@ def _run_target_replica(
             payload=payload,
         )
 
-    record = client.chat(payload)
+    record = client.chat(message)
 
     if not record.finished:
         problems = ", ".join(record.violations) or "no run.finished"
@@ -907,7 +917,7 @@ def _run_target_replica(
         )
 
     repo.insert_turn_event(
-        replica_id, 0, payload, record.text or "(no response)",
+        replica_id, 0, message, record.text or "(no response)",
         tokens_in=record.tokens_in,
         tokens_out=record.tokens_out,
         latency_ms=record.latency_ms,

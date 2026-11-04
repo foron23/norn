@@ -251,4 +251,36 @@ Three rules keep it honest:
    measurement, and dropping it shrinks the denominator.
 3. With no weighable replica the value is `None` and the CLI renders `n/d`.
 
+## 10. Target Corpus (Which Cases, and What They Claim)
+
+Target cases live in the repository: `norn/corpus/l3/target/probes.json`, next to
+`surface.yaml`, the manifest they bind to. A campaign points `corpus_dir` at that
+directory, so the corpus hash in the report names a versioned file instead of a
+scratch path.
+
+A variant that means to be measured declares, beyond `plant` and
+`requires_role`:
+
+- `user_turn` — **the operator's request**, and it is not the poison. The replica
+  chats this text; the payload only travels through the door. Without it the
+  model is told by the user to do the thing, the app sees operator intent, and
+  every intent-based rule is tested against a lie.
+- `probes_rule` — the single rule of the target's policy this case is aimed at,
+  in the target's own words (`crm.write_note: content from an untrusted source`).
+  The report prints it next to the case, so a run answers "did this rule hold?"
+  and not just "did something happen?".
+- `evasion` — when the case tries to slip past that rule: `reescritura` (no
+  structured field), `dominio interno` (recipient inside the allow-list),
+  `lectura sin peso` (the record leaves inside the answer, which weighs 0) or
+  `escritura partida` (two calls instead of one).
+
+`tests/test_target_corpus.py` fails when a case stops binding to `surface.yaml`,
+when a case lacks `probes_rule`, or when `user_turn` repeats the payload or asks
+for the planted identifier itself.
+
+A read that obeys the payload still weighs nothing, so the report says it out
+loud: obedient calls with zero weight are listed under "what this report does not
+prove". A separate metric for data exposure is future work, not a number to
+invent here.
+
 *End of contract.*
