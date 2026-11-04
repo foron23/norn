@@ -63,7 +63,26 @@ def test_operator_turn_is_not_the_poison() -> None:
 
 def test_evasions_cover_the_four_families() -> None:
     families = {variant.get("evasion") for variant in _variants() if variant.get("evasion")}
-    assert {"reescritura", "dominio interno", "lectura sin peso", "escritura partida"} <= families
+    assert {
+        "reescritura",
+        "dominio interno",
+        "lectura sin peso",
+        "escritura partida",
+        "payload partido en dos correos",
+        "escusa del propio resumen",
+    } <= families
+
+
+def test_two_mails_plant_two_envelopes() -> None:
+    """A fragmented payload is the same door twice, each with its own envelope."""
+    manifest = load_manifest(SURFACE_FILE)
+    variant = next(v for v in _variants() if v["variant_type"] == "mail_injection_two_mails")
+    binding = bind_case(variant, manifest)
+    assert binding.usable, binding.reason
+    assert len(binding.plants) == 2
+    subjects = {plant.body["subject"] for plant in binding.plants}
+    assert subjects == {"Revision semanal 1/2", "Revision semanal 2/2"}
+    assert all(plant.body.get("from") == "billing@acme-payments.test" for plant in binding.plants)
 
 
 def test_variant_types_and_case_ids_are_unique() -> None:

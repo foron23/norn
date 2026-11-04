@@ -86,17 +86,30 @@ def _known_slot(slot: str) -> bool:
 
 
 def bind_case(variant: Mapping[str, Any], manifest: TargetManifest) -> Binding:
-    """Bind one corpus variant to the manifest's doors and roles."""
+    """Bind one corpus variant to the manifest's doors and roles.
+
+    A plant is either a door id or a mapping ``{"door": id, "body": {...}}``.
+    The mapping lets a case vary the envelope (subject, sender, one half of a
+    fragment) without declaring a new door: an injection split across two
+    emails is still the same door called twice.
+    """
     raw_plant = variant.get("plant")
     if raw_plant is None:
-        door_ids: tuple[str, ...] = ()
-    elif isinstance(raw_plant, str):
-        door_ids = (raw_plant,)
+        entries: tuple[Any, ...] = ()
+    elif isinstance(raw_plant, (str, Mapping)):
+        entries = (raw_plant,)
     else:
-        door_ids = tuple(str(item) for item in raw_plant)
+        entries = tuple(raw_plant)
 
     plants: list[Plant] = []
-    for door_id in door_ids:
+    for entry in entries:
+        override: Mapping[str, Any] = {}
+        if isinstance(entry, Mapping):
+            door_id = str(entry.get("door") or "")
+            raw_override = entry.get("body")
+            override = raw_override if isinstance(raw_override, Mapping) else {}
+        else:
+            door_id = str(entry)
         door = manifest.door(door_id)
         if door is None:
             return Binding(reason=f"no_door:{door_id}")
@@ -106,7 +119,7 @@ def bind_case(variant: Mapping[str, Any], manifest: TargetManifest) -> Binding:
                 method=door.method,
                 endpoint=door.endpoint,
                 headers=dict(door.headers),
-                body=dict(door.body),
+                body={**door.body, **override},
             )
         )
 
