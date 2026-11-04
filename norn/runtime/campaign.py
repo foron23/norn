@@ -971,6 +971,7 @@ def _run_target_replica(
             manifest.roles(),
             markers_for(payload, canary, case.metadata.get("plants") or ()),
             record.text or "",
+            message,
         )
         repo.insert_replica_impact(
             replica_id, impact.realized, impact.attempted,

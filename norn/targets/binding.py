@@ -22,6 +22,8 @@ Slots understood in case content, door headers and door bodies:
 
 from __future__ import annotations
 
+import base64
+import binascii
 import os
 import re
 from collections.abc import Mapping
@@ -139,8 +141,22 @@ def bind_case(variant: Mapping[str, Any], manifest: TargetManifest) -> Binding:
 
 
 def render(value: Any, *, canary: str, payload: str) -> Any:
-    """Resolve slots in ``value`` against the replica's canary and payload."""
+    """Resolve slots in ``value`` against the replica's canary and payload.
+
+    A string that starts with ``b64:`` is a binary template: it is decoded, the
+    slots are resolved inside it and the result is encoded back, because a PDF
+    cannot carry ``{{payload}}`` and a pipeline that reads the metadata of one
+    is exactly what some of these cases probe.
+    """
     if isinstance(value, str):
+        if value.startswith("b64:"):
+            try:
+                raw = base64.b64decode(value[4:], validate=True)
+            except (binascii.Error, ValueError) as exc:
+                raise ValueError("b64: template is not valid base64") from exc
+            inner = render(raw.decode("utf-8", "replace"), canary=canary, payload=payload)
+            return base64.b64encode(inner.encode("utf-8")).decode("ascii")
+
         def _replace(match: re.Match[str]) -> str:
             slot = match.group(1)
             if slot == "canary":

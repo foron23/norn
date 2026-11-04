@@ -72,6 +72,7 @@ _MANIFEST_FIELDS = frozenset(
         "token_env",
         "deadline_ms",
         "event_map",
+        "conditions",
         "tools",
         "doors",
     }
@@ -213,6 +214,10 @@ class TargetManifest:
     event_map: dict[str, str] = field(default_factory=dict)
     tools: dict[str, ToolSpec] = field(default_factory=dict)
     doors: dict[str, Door] = field(default_factory=dict)
+    #: What the target was configured with when it ran (gate on/off, model
+    #: version). Declared here because it is a property of the app under test,
+    #: not of the campaign: the same corpus runs against both conditions.
+    conditions: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "name", _require_text(self.name, "name"))
@@ -430,6 +435,14 @@ def from_dict(data: Mapping[str, Any]) -> TargetManifest:
             "event_map must be a mapping of canonical event names"
         )
 
+    raw_conditions = data.get("conditions")
+    if raw_conditions is None:
+        raw_conditions = {}
+    if not isinstance(raw_conditions, Mapping):
+        raise ValueError(  # noqa: TRY004 - one error type for the whole manifest
+            "conditions must be a mapping of declared target settings"
+        )
+
     return TargetManifest(
         name=_require_field(data, "name"),
         base_url=_require_field(data, "base_url"),
@@ -441,6 +454,7 @@ def from_dict(data: Mapping[str, Any]) -> TargetManifest:
         event_map=dict(raw_event_map),
         tools=_tools_from_mapping(data.get("tools")),
         doors=_doors_from_list(data.get("doors")),
+        conditions={str(key): str(value) for key, value in raw_conditions.items()},
     )
 
 
