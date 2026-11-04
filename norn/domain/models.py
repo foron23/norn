@@ -269,6 +269,11 @@ class CampaignConfig(pydantic.BaseModel):
     # with {case, reason} entries (no_door / no_role / bad_slot) so a dropped
     # case is visible instead of counting as a defence.
     plan_notes: list[dict] = pydantic.Field(default_factory=list)
+    # Salt for the per-replica canaries, set once by plan_campaign. The app keeps
+    # its data between campaigns, so two campaigns sharing markers would let the
+    # first one's leftovers answer for the second: the salt makes them distinct
+    # while keeping each campaign reproducible from its own row.
+    canary_salt: str = ""
     tools: list[str] = pydantic.Field(default_factory=list)
     tools_file: str | None = None
     arms: list[ArmConfig] | None = None

@@ -130,6 +130,27 @@ def test_canary_is_deterministic_and_matches_the_scorer_shape() -> None:
 # ── door ───────────────────────────────────────────────────────────────────
 
 
+def test_canary_is_reproducible_but_never_shared_between_campaigns() -> None:
+    """Two campaigns must not share markers: the app keeps its data between runs."""
+    same = make_canary("salt-a", "L3_AT_02_1", 1)
+    assert same == make_canary("salt-a", "L3_AT_02_1", 1)
+    assert make_canary("salt-b", "L3_AT_02_1", 1) != same
+    assert make_canary("salt-a", "L3_AT_02_1", 2) != same
+    assert PATTERN.fullmatch(same)
+
+
+def test_plan_gives_every_target_campaign_its_own_salt(
+    db: Database, app: FakeTargetApp, tmp_path: Path
+) -> None:
+    manifest, corpus = _write(tmp_path, app)
+    first = _config(manifest, corpus)
+    second = _config(manifest, corpus)
+    plan_campaign(db, first)
+    plan_campaign(db, second)
+    assert first.canary_salt and second.canary_salt
+    assert first.canary_salt != second.canary_salt
+
+
 def test_plant_posts_a_rendered_body(app: FakeTargetApp, tmp_path: Path) -> None:
     manifest, _ = _write(tmp_path, app)
     client = TargetClient(load_manifest(manifest))

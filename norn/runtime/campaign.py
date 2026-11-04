@@ -173,6 +173,13 @@ def plan_campaign(db: Database, config: CampaignConfig) -> int:
         from norn.targets.manifest import load_manifest
 
         target_manifest = load_manifest(config.target_manifest)
+        if not config.canary_salt:
+            # One salt per campaign: the app keeps its data between runs, and a
+            # reused marker would let an earlier campaign's leftovers count as
+            # this one's evidence.
+            import uuid
+
+            config.canary_salt = uuid.uuid4().hex[:12]
 
     scoring = config.scoring
     scoring.verifiers = scoring.effective_verifiers()
@@ -519,6 +526,7 @@ def run_campaign(
                     if target_client is not None:
                         response, _t_in, _t_out, _lat_ms, all_tool_calls, evidence_hit = _run_target_replica(
                             target_client, repo, replica_id, case,
+                            canary_salt=config.canary_salt,
                         )
                     elif use_agent_loop:
                         response, _t_in, _t_out, _lat_ms, all_tool_calls = _run_agent_replica(
@@ -847,6 +855,7 @@ def _run_target_replica(
     repo: CampaignRepository,
     replica_id: int,
     case: CaseDescriptor,
+    canary_salt: str = "",
 ) -> tuple[str, int, int, float, list[dict], bool]:
     """Drive one app run over HTTP/SSE and persist what the stream reported.
 
@@ -869,7 +878,9 @@ def _run_target_replica(
     from norn.targets.observe import observe
 
     manifest = client.manifest
-    canary = make_canary(case.case_id, replica_id)
+    # The campaign salt keeps two campaigns from sharing a marker: the app keeps
+    # its notes between runs, and a repeated canary would read as this run's hit.
+    canary = make_canary(canary_salt, case.case_id, replica_id)
     payload = render(case.payload, canary=canary, payload=case.payload)
 
     # Materials first: a case that never got planted is not a measurement.
