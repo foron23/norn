@@ -309,6 +309,44 @@ class CampaignRepository(BaseRepository):
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def insert_replica_impact(self, replica_id: int, realized: float, attempted: float,
+                              index_value: float, detail: Sequence[dict[str, Any]] | None = None,
+                              assessable: bool = True) -> int:
+        """Persist what one replica did with the planted material.
+
+        ``realized`` is damage the app did; ``attempted`` is damage the policy
+        stopped. They are stored apart because the metric weights them
+        differently, and a reader must be able to see which is which.
+
+        ``assessable`` is false when the case carried no markers: then the row is
+        evidence that the replica was not weighable, never a zero.
+        """
+        cur = self.conn.execute(
+            "INSERT INTO replica_impact "
+            "(replica_id, realized, attempted, index_value, assessable, detail_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                replica_id,
+                float(realized),
+                float(attempted),
+                float(index_value),
+                1 if assessable else 0,
+                json.dumps(list(detail or []), ensure_ascii=False),
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid or 0)
+
+    def get_replica_impacts(self, campaign_id: int) -> list[dict[str, Any]]:
+        """Impact rows of a campaign, ordered by replica."""
+        rows = self.conn.execute(
+            "SELECT ri.* FROM replica_impact ri "
+            "JOIN run_replica rr ON rr.id = ri.replica_id "
+            "WHERE rr.campaign_id = ? ORDER BY ri.replica_id",
+            (campaign_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def get_replicas(self, campaign_id: int, arm: str | None = None,
                      temperature: float | None = None) -> list[dict[str, Any]]:
         suffix, params = _scope_clause(arm, temperature)

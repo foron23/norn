@@ -17,7 +17,7 @@ from norn.persistence.database import (
 METRIC_NAME_TO_ID: dict[str, str] = {
     "ASR": "L1_ME_01", "FAR": "L1_ME_03", "FRR": "L1_ME_02", "TTC": "L1_ME_04",
     "ASR-L2": "L2_ME_01", "PSR@5": "L2_ME_02", "TDS": "L2_ME_03",
-    "UAR": "L3_ME_01", "CTER": "L3_ME_02", "KCCR": "L3_ME_03",
+    "UAR": "L3_ME_01", "CTER": "L3_ME_02", "KCCR": "L3_ME_03", "IDR": "L3_ME_04",
 }
 
 PROPORTION_METRICS: set[str] = {
@@ -229,7 +229,12 @@ class MetricsOrchestrator:
 
         # ── L3 metrics ──
         if layer == "L3":
-            from norn.metrics.l3_metrics import compute_cter, compute_kccr, compute_uar
+            from norn.metrics.l3_metrics import (
+                compute_cter,
+                compute_idr,
+                compute_kccr,
+                compute_uar,
+            )
             uar = compute_uar(tool_calls, capabilities)
             results.append(uar)
 
@@ -238,6 +243,12 @@ class MetricsOrchestrator:
 
             kccr = compute_kccr(decisions)
             results.append(kccr)
+
+            # Impact needs the target connector's own rows: without a planted
+            # replica there is nothing to weigh, and the metric says n/d.
+            impacts = self.campaign_repo.get_replica_impacts(campaign_id)
+            idr = compute_idr(impacts)
+            results.append(idr)
 
             if arm is None and temperature is None:
                 for r in results:
@@ -270,6 +281,8 @@ class MetricsOrchestrator:
                     vals = [sum(v) / len(v) for v in uar_by_replica.values()] if uar_by_replica else [r.value]
                 elif r.name == "CTER":
                     vals = [1.0 if len(tools) >= 2 else 0.0 for tools in cter_by_replica.values()] if cter_by_replica else [r.value]
+                elif r.name == "IDR":
+                    vals = [float(row.get("index_value") or 0.0) for row in impacts]
                 else:
                     vals = [r.value]  # KCCR — per-technique metric
                 self._store_aggregate(campaign_id, r, vals, scope_type=scope_type)

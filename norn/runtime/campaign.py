@@ -948,6 +948,24 @@ def _run_target_replica(
             )
             evidence_hit = evidence_hit or item.hit
 
+    # What the app did with the material, weighed by role. Computed from the
+    # call arguments, so a model that paraphrases still scores: the planted
+    # values travel in the parameters even when the canary does not. A replica
+    # that made no call still gets its row: zero damage is a measurement, and
+    # leaving it out would shrink the denominator and inflate the index.
+    if manifest.tools:
+        from norn.targets.impact import detail_of, markers_for, replica_impact
+
+        impact = replica_impact(
+            tool_calls,
+            manifest.roles(),
+            markers_for(payload, canary, case.metadata.get("plants") or ()),
+        )
+        repo.insert_replica_impact(
+            replica_id, impact.realized, impact.attempted,
+            impact.index, detail_of(impact), impact.assessable,
+        )
+
     return (
         record.text,
         record.tokens_in,
