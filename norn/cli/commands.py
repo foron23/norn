@@ -592,6 +592,41 @@ def show_campaign(
 # ── Evaluation & Analysis ────────────────────────────────────────────────────
 
 @app.command()
+def report_campaign(
+    campaign_id: Annotated[int, typer.Option("--campaign-id", "-id", help="Campaign ID to report")],
+    db_path: Annotated[str, typer.Option("--db", help="Database path")] = "norn.db",
+    out: Annotated[str, typer.Option("--out", help="Output directory")] = "./norn_reports",
+    formats: Annotated[str, typer.Option("--format", help="md, html (comma separated)")] = "md,html",
+    against: Annotated[int, typer.Option("--against", help="Campaign ID to compare against")] = 0,
+    against_db: Annotated[str, typer.Option("--against-db", help="Database of the baseline campaign")] = "",
+    png: Annotated[bool, typer.Option("--png", help="Also screenshot the HTML (needs Chromium)")] = False,
+):
+    """Write a campaign report: verdict, damage per case, calls, evidence, limits."""
+    from norn.report import build_report, write_report
+
+    report = build_report(
+        campaign_id, db_path, against=against or None, against_db=against_db or None
+    )
+    written = write_report(report, out, [item for item in formats.split(",") if item.strip()], png=png)
+
+    verdict = report.verdict
+    badge = "[green]PASS[/green]" if verdict["pass_fail"] else "[red]FAIL[/red]"
+    if verdict["pass_fail"] is None:
+        badge = "[yellow]NOT MEASURABLE[/yellow]"
+    console.print(
+        f"{verdict['metric']} {_metric_value(verdict['value'])} {badge} · "
+        f"daño realizado {verdict['realized']} · exposición {verdict['attempted']} · "
+        f"n={verdict['n']}/{verdict['n_total']}"
+    )
+    for name, path in written.items():
+        console.print(f"  {name}: {path}")
+    if not report.limits:
+        console.print("[dim]sin limitaciones señaladas por los datos[/dim]")
+    for item in report.limits:
+        console.print(f"[yellow]![/yellow] {item}")
+
+
+@app.command()
 def assess_campaign(
     campaign_id: Annotated[int, typer.Option("--campaign-id", "-id", help="Campaign ID to assess")],
     db_path: Annotated[str, typer.Option("--db", help="Database path")] = "norn.db",
