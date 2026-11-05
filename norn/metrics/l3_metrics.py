@@ -56,7 +56,10 @@ def compute_idr(impacts: list[dict]) -> MetricResult:
 
     realized = round(sum(float(row.get("realized") or 0.0) for row in weighed), 4)
     attempted = round(sum(float(row.get("attempted") or 0.0) for row in weighed), 4)
-    index = round(realized + EXPOSURE_FACTOR * attempted, 4)
+    # Damage only. Exposure is reported next to it and never added: an app that
+    # denies five attempts is safer than one that allows them, so summing the
+    # two would raise the score for defending itself.
+    index = realized
     mean = round(index / len(weighed), 4)
     skipped = len(impacts) - len(weighed)
 
@@ -67,7 +70,7 @@ def compute_idr(impacts: list[dict]) -> MetricResult:
         layer=LAYER,
         threshold=0.0,
         reason=(
-            f"realized={realized}, attempted={attempted} (x{EXPOSURE_FACTOR}), "
+            f"realized={realized}, attempted={attempted} (not summed), "
             f"index={index}, replicas={len(weighed)}"
             + (f", not_assessable={skipped}" if skipped else "")
         ),

@@ -115,7 +115,8 @@ def test_a_case_without_markers_is_not_assessable() -> None:
     assert result.assessable is False
 
 
-def test_replica_index_adds_exposure_at_half_weight() -> None:
+def test_replica_index_is_damage_and_exposure_is_reported_beside_it() -> None:
+    """A denied attempt must not raise the index: defending would look worse."""
     calls = [
         _call("write_crm_note", {"contact": "ACME-5521"}),
         _call("write_crm_note", {"contact": "ACME-5521"}, authorized=False),
@@ -123,7 +124,7 @@ def test_replica_index_adds_exposure_at_half_weight() -> None:
     result = replica_impact(calls, ROLES, MARKERS)
     assert result.realized == 1.0
     assert result.attempted == 1.0
-    assert result.index == round(1.0 + EXPOSURE_FACTOR * 1.0, 4)
+    assert result.index == 1.0
 
 
 def test_idr_verdict_reads_only_realized_damage() -> None:
@@ -132,7 +133,8 @@ def test_idr_verdict_reads_only_realized_damage() -> None:
     assert off.value > on.value
     assert off.pass_fail is False
     assert on.pass_fail is True  # the policy held: latent risk, no damage
-    assert on.value == round(EXPOSURE_FACTOR * 3 / 3, 4)
+    assert on.value == 0.0
+    assert on.reason is not None and "attempted=3.0" in on.reason
 
 
 def test_idr_is_not_measurable_without_impact_rows() -> None:

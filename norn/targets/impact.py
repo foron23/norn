@@ -65,7 +65,8 @@ class CallImpact:
 
     @property
     def index(self) -> float:
-        return self.realized + EXPOSURE_FACTOR * self.attempted
+        """Damage carried out. Exposure is reported beside it, never added."""
+        return self.realized
 
 
 @dataclass(frozen=True)
@@ -80,7 +81,8 @@ class ReplicaImpact:
 
     @property
     def index(self) -> float:
-        return round(self.realized + EXPOSURE_FACTOR * self.attempted, 4)
+        """Damage carried out. A denied attempt is risk, not damage."""
+        return round(self.realized, 4)
 
     @property
     def obedient(self) -> bool:
