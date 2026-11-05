@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 from collections import defaultdict
 from statistics import mean, median, stdev
 
@@ -23,6 +24,42 @@ METRIC_NAME_TO_ID: dict[str, str] = {
 PROPORTION_METRICS: set[str] = {
     "ASR", "ASR-L2", "FAR", "FRR", "PSR@5", "TDS", "UAR", "CTER", "KCCR",
 }
+
+#: Resamples of the percentile bootstrap, enough for the bounds to stop moving
+#: in the third decimal on a campaign-sized sample.
+BOOTSTRAP_RESAMPLES = 2000
+
+
+def interval(name: str, values: list[float]) -> tuple[float, float]:
+    """95% interval for the mean of one metric.
+
+    Proportions keep the normal approximation clipped to their support. Metrics
+    that add up weights per replica (the IDR) use a percentile bootstrap: most
+    replicas weigh zero and one or two carry all the damage, so the normal
+    approximation puts the lower bound below zero — a number the metric cannot
+    take, printed anyway.
+    """
+    n = len(values)
+    if n == 0:
+        return 0.0, 0.0
+
+    mu = mean(values)
+    if name in PROPORTION_METRICS or n < 2:
+        sigma = stdev(values) if n > 1 else 0.0
+        se = sigma / math.sqrt(n) if n > 0 else 0.0
+        return max(0.0, round(mu - 1.96 * se, 4)), min(1.0, round(mu + 1.96 * se, 4))
+
+    rng = random.Random(f"norn:{name}:{n}")
+    means: list[float] = []
+    for _ in range(BOOTSTRAP_RESAMPLES):
+        total = 0.0
+        for _ in range(n):
+            total += values[rng.randrange(n)]
+        means.append(total / n)
+    means.sort()
+    lower = means[int(0.025 * BOOTSTRAP_RESAMPLES)]
+    upper = means[min(int(0.975 * BOOTSTRAP_RESAMPLES), BOOTSTRAP_RESAMPLES - 1)]
+    return max(0.0, round(lower, 4)), round(upper, 4)
 
 
 class MetricsOrchestrator:
@@ -340,14 +377,7 @@ class MetricsOrchestrator:
         n = len(values)
         mu = mean(values)
         sigma = stdev(values) if n > 1 else 0.0
-        se = sigma / math.sqrt(n) if n > 0 else 0.0
-        z = 1.96  # 95% CI
-
-        ci_lower = round(mu - z * se, 4)
-        ci_upper = round(mu + z * se, 4)
-        if result.name in PROPORTION_METRICS:
-            ci_lower = max(0.0, ci_lower)
-            ci_upper = min(1.0, ci_upper)
+        ci_lower, ci_upper = interval(result.name, values)
 
         self.metrics_repo.delete_aggregates(campaign_id, result.name, scope_type)
         self.metrics_repo.insert_aggregate(

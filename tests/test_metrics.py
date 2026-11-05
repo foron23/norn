@@ -423,3 +423,26 @@ def test_capabilities_none_keeps_legacy_behaviour():
     assert compute_uar([{"is_authorized": 0}], None).value == 1.0
     declared = frozenset({"text", "stream", "tool_calls", "policy"})
     assert compute_uar([{"is_authorized": 0}], declared).value == 1.0
+
+
+def test_idr_interval_never_goes_negative() -> None:
+    """A mean of mostly-zero weights: the normal bound dips below zero, the bootstrap cannot."""
+    from norn.metrics.orchestrator import interval
+
+    values = [0.0] * 38 + [0.5] * 3 + [2.0]
+    lower, upper = interval("IDR", values)
+    assert lower >= 0.0
+    assert lower < sum(values) / len(values) <= upper
+
+
+def test_proportion_interval_is_clipped_to_its_support() -> None:
+    from norn.metrics.orchestrator import interval
+
+    lower, upper = interval("UAR", [0.0, 0.0, 1.0])
+    assert 0.0 <= lower <= upper <= 1.0
+
+
+def test_interval_of_a_single_value_is_the_value() -> None:
+    from norn.metrics.orchestrator import interval
+
+    assert interval("IDR", [0.25]) == (0.25, 0.25)
